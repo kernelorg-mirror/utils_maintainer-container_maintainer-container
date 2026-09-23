@@ -1,0 +1,102 @@
+# A podman quadlet unit, for running this container as a systemd user
+# service instead of a bare `podman run'.
+#
+# Install it with:
+#
+#     podman volume create maint
+#     mkdir -p ~/.config/containers/systemd
+#     cp systemd/maint.container ~/.config/containers/systemd/
+#     systemctl --user daemon-reload
+#     systemctl --user start maint
+#
+# and read its output with `journalctl --user -u maint -f'. Note the
+# unit is named after the file, so the service is `maint', not
+# `maint.container'.
+#
+# Nothing here starts on boot; see the end of this file for how to opt in.
+#
+# On a machine you reach over ssh, do this before any of the above:
+#
+#     loginctl enable-linger $USER
+#
+# Without lingering, the user systemd instance -- and so this container --
+# is torn down when your last session ends. That is survivable on a
+# workstation and is not on a remote box, where the first cold start is
+# hours of cloning and indexing that nobody is sitting and watching.
+
+[Unit]
+Description=Kernel maintainer container (korgalore + public-inbox + grokmirror)
+# No network ordering here on purpose. The entrypoint does want a route out
+# -- it syncs the venv from git before anything else -- but
+# network-online.target is a system target and does not exist in a user
+# manager, so ordering against it in a user unit is a line that reads as if
+# it does something and does not. quadlet already injects
+# podman-user-wait-network-online.service, which is the user-session
+# equivalent and the thing that actually waits.
+
+[Container]
+ContainerName=maint
+Image=localhost/maintainer-container:latest
+# The image is built locally and lives in no registry. Without this,
+# podman treats `localhost/...' as a name to resolve and the unit fails on
+# a pull that was never going to work.
+Pull=never
+Volume=maint:/data
+# Everything is served from this one port, and nothing here authenticates
+# anything: the protection is that the port is not reachable. Keep the
+# 127.0.0.1 prefix and reach a remote one with
+# `ssh -L 11043:127.0.0.1:11043 <host>'.
+#
+# Publishing a port only forwards it -- the optional IMAP and NNTP
+# listeners stay off until they are enabled from the dashboard, so adding
+# `PublishPort=127.0.0.1:11143:11143' here is the other half of turning
+# one on, not a way to turn it on.
+#
+# To reach it from elsewhere over a VPN such as tailscale or wireguard,
+# publish it on *that interface's* address rather than on 0.0.0.0:
+#
+#     PublishPort=100.x.y.z:11043:11043
+#     Environment=ROUTER_PUBLIC_BASE=http://<name>.<tailnet>.ts.net:11043
+#     Environment=PUBLISH_ADDRESS=100.x.y.z
+#
+# 0.0.0.0 would work too and is the wrong reflex: it also binds whatever
+# public interface the machine has, leaving a firewall as the only thing
+# between an unauthenticated archive and the internet. Naming the VPN
+# address gets the same reachability and cannot be reached from anywhere
+# else, whatever the firewall is doing.
+#
+# Neither of the two environment lines is optional once the address
+# changes, and they are not the same setting. The archive's own pages
+# follow whatever address the request came in on, so those are fine
+# either way; ROUTER_PUBLIC_BASE is what the dashboard shows and offers
+# to copy, and PUBLISH_ADDRESS is the address it puts in the ready-made
+# `-p' flag for turning IMAP or NNTP on. Leaving either at the default
+# hands out a loopback address to a reader who is not on this machine.
+#
+# They are two settings because they cannot be one: ROUTER_PUBLIC_BASE is
+# a URL, and podman will not take a hostname in --publish.
+PublishPort=127.0.0.1:11043:11043
+
+[Service]
+Restart=always
+# Publishing on a VPN address means the bind fails outright if the
+# interface is not up yet, which at boot is a race this loses about as
+# often as it wins. Restarting is the whole remedy; the five seconds keep
+# it from spinning while tailscaled finishes.
+RestartSec=5
+# The first start clones the subsystem's git trees and backfills the mail
+# archives, which is tens of minutes at best. Any finite timeout here is a
+# promise about somebody else's bandwidth, so make none.
+TimeoutStartSec=0
+
+# There is deliberately no [Install] section, so nothing starts this at
+# login or boot: `systemctl --user start maint' is the only thing that
+# does. A full mirror plus lei and Xapian indexing is a lot to bring up on
+# a laptop that did not ask for it. On a machine that should come back by
+# itself after a reboot, add this to the *installed* copy, not this one:
+#
+#     [Install]
+#     WantedBy=default.target
+#
+# and run `systemctl --user daemon-reload'. (Quadlet enables the unit
+# itself from that; there is no `systemctl enable' step.)

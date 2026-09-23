@@ -1,0 +1,1794 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maintainer container setup</title>
+<style>
+  :root {
+    --bg: #fbfaf7;
+    --panel: #ffffff;
+    --ink: #1e2420;
+    --muted: #6e7a72;
+    --line: #e2e0d9;
+    --accent: #2f6f56;
+    --accent-soft: #eaf2ed;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161a18;
+      --panel: #1e2422;
+      --ink: #e6e9e5;
+      --muted: #8b968a;
+      --line: #2e3733;
+      --accent: #6fbf95;
+      --accent-soft: #23302a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2.5rem 1.25rem 4rem;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 1.55rem; margin: 0 0 0.4rem; }
+  .lede { color: var(--muted); margin: 0 0 2rem; max-width: 34rem; }
+  label { display: block; font-weight: 600; margin-bottom: 0.4rem; }
+  /* Every text-entry box on every screen, not just the pickers' search
+     fields -- the "track messages since" and email boxes are the same
+     control and had been left with the browser's default styling. */
+  input[type="search"],
+  input[type="text"],
+  input[type="email"] {
+    width: 100%;
+    padding: 0.7rem 0.85rem;
+    font: inherit;
+    color: inherit;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  input[type="search"]:focus-visible,
+  input[type="text"]:focus-visible,
+  input[type="email"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .hint { color: var(--muted); font-size: 0.85rem; margin: 0.45rem 0 0; }
+  section { margin-top: 2rem; }
+  h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 0.7rem; }
+  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+  .row {
+    display: flex;
+    gap: 0.7rem;
+    align-items: flex-start;
+    padding: 0.7rem 0.85rem;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .row:hover { border-color: var(--accent); }
+  .row.picked { background: var(--accent-soft); border-color: var(--accent); }
+  .row input { margin: 0.25rem 0 0; accent-color: var(--accent); }
+  .name { font-weight: 600; overflow-wrap: anywhere; }
+  .meta { color: var(--muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+  .chips { flex-direction: row; flex-wrap: wrap; gap: 0.5rem; }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.4rem 0.35rem 0.7rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    overflow-wrap: anywhere;
+  }
+  .chip-drop {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    padding: 0;
+    font-size: 1rem;
+    line-height: 1;
+    color: var(--ink);
+    background: transparent;
+    border-radius: 999px;
+  }
+  .chip-drop:hover { background: var(--accent); color: #fff; }
+  .gen-item {
+    padding: 0.6rem 0.85rem;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  .gen-item-head { display: flex; justify-content: space-between; gap: 1rem; }
+  .gen-item .state { color: var(--muted); font-size: 0.85rem; }
+  .gen-item.running { border-color: var(--accent); }
+  .gen-item.running .state { color: var(--accent); }
+  .gen-item.ok { border-color: var(--accent); }
+  .gen-item.ok .state { color: var(--accent); }
+  .gen-item.fail { border-color: #b3453f; }
+  .gen-item.fail .state { color: #b3453f; }
+  .gen-item details { margin-top: 0.4rem; }
+  .gen-item summary { color: var(--muted); font-size: 0.8rem; cursor: pointer; }
+  .gen-item pre {
+    margin: 0.4rem 0 0;
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--muted);
+    max-height: 12rem;
+    overflow-y: auto;
+  }
+  .toggle-row {
+    display: flex;
+    gap: 0.7rem;
+    align-items: flex-start;
+    padding: 0.7rem 0.85rem;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .toggle-row:hover { border-color: var(--accent); }
+  .toggle-row.on { background: var(--accent-soft); border-color: var(--accent); }
+  .toggle-row input { margin: 0.25rem 0 0; accent-color: var(--accent); }
+  .port { font-weight: 400; color: var(--muted); }
+  .publish {
+    margin: 0.6rem 0 0;
+    padding: 0.7rem 0.85rem;
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  #mirror-log-details { margin-top: 0.7rem; }
+  #mirror-log-details summary { color: var(--muted); font-size: 0.8rem; cursor: pointer; }
+  #mirror-log {
+    margin: 0.4rem 0 0;
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--muted);
+    max-height: 14rem;
+    overflow-y: auto;
+  }
+  .bar {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 2rem;
+    padding: 1rem 0;
+    background: linear-gradient(to top, var(--bg) 70%, transparent);
+  }
+  button {
+    font: inherit;
+    font-weight: 600;
+    padding: 0.6rem 1.3rem;
+    color: #fff;
+    background: var(--accent);
+    border: 0;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  .status { color: var(--muted); font-size: 0.9rem; }
+  .link-row {
+    display: block;
+    padding: 0.7rem 0.85rem;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    text-decoration: none;
+    color: inherit;
+  }
+  .link-row:hover { border-color: var(--accent); }
+  .link-row .name { color: var(--accent); }
+  .kv {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 0.3rem 1rem;
+    margin: 0.6rem 0 0;
+    font-size: 0.9rem;
+  }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .mail-block { margin-top: 0.7rem; }
+  .mail-block:first-child { margin-top: 0; }
+  .paths { font-size: 0.85rem; color: var(--muted); gap: 0.2rem; }
+  /* Real bullets, so the group names read as a list rather than as one
+     long sentence. The base `ul' is a flex column with no markers, which
+     suppresses them, so this has to go back to block layout. */
+  .groups {
+    display: block;
+    list-style: disc;
+    padding-left: 1.4rem;
+    margin: 0.4rem 0 0;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .groups li { overflow-wrap: anywhere; }
+  #done-screen details { margin-top: 0.7rem; }
+  #done-screen summary { color: var(--muted); font-size: 0.8rem; cursor: pointer; }
+</style>
+</head>
+<body>
+<main id="identity-screen">
+  <h1>Maintainer Container: Initial Setup</h1>
+  <p class="lede">Enter your email address, as listed in the MAINTAINERS
+  file.</p>
+
+  <label for="identity-address">Your email address</label>
+  <input id="identity-address" type="email" autocomplete="email" autofocus
+         placeholder="e.g. you@example.com">
+  <p class="hint">Not in MAINTAINERS? Skip to the next screen and pick the
+  subsystems by hand.</p>
+
+  <div class="bar">
+    <button id="identity-next">Next &gt;</button>
+    <button id="identity-skip" class="secondary">Skip</button>
+    <span class="status" id="identity-status"></span>
+  </div>
+</main>
+
+<main id="pick-screen" hidden>
+  <h1>Choose subsystems to track</h1>
+  <p class="lede">Select the subsystems you want to track.
+  <span id="identity-note" hidden></span></p>
+
+  <label for="q">Search subsystems</label>
+  <input id="q" type="search" autocomplete="off" autofocus
+         placeholder="e.g. nfs, scsi, arm64, gpio">
+  <p class="hint" id="hint">Type to search the MAINTAINERS file.</p>
+
+  <section id="picked-section" hidden>
+    <h2>Selected (<span id="count">0</span>)</h2>
+    <ul id="picked" class="chips"></ul>
+  </section>
+
+  <section id="results-section" hidden>
+    <h2>Results</h2>
+    <ul id="results"></ul>
+  </section>
+
+  <div class="bar">
+    <button id="pick-back" class="secondary">&lt; Back</button>
+    <button id="save" disabled>Next &gt;</button>
+    <span class="status" id="status"></span>
+  </div>
+</main>
+
+<main id="generate-screen" hidden>
+  <h1>Setup for initial run</h1>
+  <p class="lede">How far back should the archives go? Longer periods will require more storage and a longer initial indexing time.</p>
+
+  <label for="since">Track messages since</label>
+  <input id="since" type="text" value="90.days.ago">
+  <p class="hint">Anything <code>lei</code> understands, e.g. <code>90.days.ago</code> or <code>2025-01-01</code>.</p>
+
+  <section>
+    <h2>Subsystems</h2>
+    <ul id="gen-list" class="chips"></ul>
+  </section>
+
+  <div class="bar">
+    <button id="back" class="secondary">&lt; Back</button>
+    <button id="generate">Import archives</button>
+    <button id="to-repos" class="secondary" disabled>Next &gt;</button>
+    <span class="status" id="gen-status"></span>
+  </div>
+</main>
+
+<main id="repos-screen" hidden>
+  <h1>Choose repos to mirror</h1>
+  <p class="lede">grokmirror keeps local clones of the git trees you pick here up to date, so cgit can serve them without hitting kernel.org on every request. Trees from the subsystems you're tracking are pre-selected below -- add or remove any you like.</p>
+
+  <label for="repo-q">Search kernel.org repositories</label>
+  <input id="repo-q" type="search" autocomplete="off"
+         placeholder="e.g. torvalds/linux, kdave/linux">
+  <p class="hint" id="repo-hint">Type to search kernel.org's repository list.</p>
+
+  <section id="repo-picked-section" hidden>
+    <h2>Selected (<span id="repo-count">0</span>)</h2>
+    <ul id="repo-picked" class="chips"></ul>
+  </section>
+
+  <section id="repo-results-section" hidden>
+    <h2>Results</h2>
+    <ul id="repo-results"></ul>
+  </section>
+
+  <section id="mirror-section" hidden>
+    <h2>Mirror</h2>
+    <ul id="mirror-list"></ul>
+    <details id="mirror-log-details" hidden>
+      <summary>grok-pull output</summary>
+      <pre id="mirror-log"></pre>
+    </details>
+  </section>
+
+  <div class="bar">
+    <button id="repos-back" class="secondary">&lt; Back</button>
+    <button id="save-repos" class="secondary">Save selection</button>
+    <button id="mirror-repos" disabled>Start mirroring</button>
+    <button id="to-daemons" class="secondary">Next &gt;</button>
+    <span class="status" id="repo-status"></span>
+  </div>
+</main>
+
+<main id="daemons-screen" hidden>
+  <h1>Optional protocols</h1>
+  <p class="lede">The archives are already served over HTTP. Turn on IMAP or
+  NNTP to reach the same mail from a mail client or a newsreader instead.
+  Both are served by the process that already serves the web port, so
+  turning one on costs nothing while it sits idle. (An MCP endpoint, for
+  putting the archive in reach of an AI assistant, is planned but not built
+  yet.)</p>
+
+  <section>
+    <h2>Protocols</h2>
+    <ul id="daemon-list"></ul>
+  </section>
+
+  <section id="publish-section" hidden>
+    <h2>One more step</h2>
+    <p class="hint">Turning a protocol on binds its port <em>inside</em> the
+    container. Nothing inside a container can publish a port to the host, so
+    recreate the container with these added to <code>podman run</code>:</p>
+    <pre id="publish-flags" class="publish"></pre>
+  </section>
+
+  <div class="bar">
+    <button id="daemons-back" class="secondary">&lt; Back</button>
+    <button id="save-daemons">Apply</button>
+    <button id="to-done" class="secondary">Next &gt;</button>
+    <span class="status" id="daemon-status"></span>
+  </div>
+</main>
+
+<main id="done-screen" hidden>
+  <h1>Your local kernel.org</h1>
+  <p class="lede">Everything below is served from this container at
+  <code id="done-base"></code>. It keeps itself up to date with upstream --
+  there is nothing here you have to re-run.
+  <span id="done-identity"></span></p>
+
+  <section>
+    <h2>Browse</h2>
+    <ul>
+      <li><a class="link-row" id="done-lore" href="/lore/">
+        <div class="name">Mail archives</div>
+        <div class="meta" id="done-lore-meta"></div>
+      </a></li>
+      <li><a class="link-row" id="done-cgit" href="/cgit/">
+        <div class="name">Git repositories</div>
+        <div class="meta" id="done-cgit-meta"></div>
+      </a></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Fetching git locally</h2>
+    <p class="hint" id="done-git-lede">As long as this container has
+    networking, the trees below keep themselves up to date. Point an
+    existing clone at one and fetches come off this machine instead of
+    going out to kernel.org.</p>
+    <p class="hint">Either alongside what you already have, as an extra
+    remote to pull from when you want the fast one:</p>
+    <pre class="publish" id="done-git-remote"></pre>
+    <p class="hint">Or in place of your origin, fetching from here while
+    pushes carry on to gitolite:</p>
+    <pre class="publish" id="done-git-origin"></pre>
+    <p class="hint">Set the push URL first, as above, so there is never a
+    moment where origin points here and pushing has nowhere to go. (See
+    <a href="https://korg.docs.kernel.org/gitolite/index.html">the gitolite
+    docs</a> if that is not where you push.)</p>
+    <p class="hint">Only the trees you chose to mirror live here, so this
+    is per-repository on purpose: a clone of something not on the list goes
+    on fetching from kernel.org, exactly as it does now.</p>
+    <details id="done-repos-details" hidden>
+      <summary>Trees on this mirror (<span id="done-repo-count">0</span>)</summary>
+      <ul id="done-repos" class="paths"></ul>
+    </details>
+  </section>
+
+  <section>
+    <h2>Point b4 at the local archive</h2>
+    <p class="hint"><code>b4.midmask</code> is where b4 goes to fetch a
+    thread by message-id, so that is the one to move:</p>
+    <pre class="publish" id="done-b4"></pre>
+    <p class="hint">The second line is only there to put
+    <code>b4.linkmask</code> back to the public default, in case it has
+    been changed: it builds the <code>Link:</code> trailer that ends up in
+    your commits, so it stays public.</p>
+    <p class="hint">The local archive only goes back as far as the window
+    you imported. When b4 can't find a message it reports it as missing
+    rather than asking lore.kernel.org, so keep
+    <code>git config --global --unset b4.midmask</code> in your back pocket
+    for older threads.</p>
+  </section>
+
+  <section>
+    <h2>Connect an LLM agent</h2>
+    <p class="hint">The archive is served over the Model Context Protocol
+    as well, so an agent can search it itself rather than be told what is
+    in it. It is a plain HTTP server -- streamable HTTP transport, no
+    authentication, no SDK -- at one address:</p>
+    <pre class="publish" id="done-mcp-url"></pre>
+    <p class="hint">That address is the whole of it. Any MCP client will
+    take it, whether it is driving a model on this machine or one
+    somewhere else; the server neither knows nor cares which.</p>
+    <p class="hint">Most clients are configured with a block of JSON that
+    looks about like this:</p>
+    <pre class="publish" id="done-mcp-json"></pre>
+    <p class="hint">Spellings differ -- some clients want
+    <code>"streamable-http"</code> or <code>"streamableHttp"</code> in
+    place of <code>"http"</code>, some put servers at the top level
+    rather than under <code>mcpServers</code>, and
+    <code>"maintainer-container"</code> is just the handle the tools
+    appear under, yours to change. The URL is the part that does not
+    vary. Some clients take
+    it on the command line instead, one example being:</p>
+    <pre class="publish" id="done-mcp-cli"></pre>
+    <p class="hint">A client that speaks only stdio needs a bridge in
+    front of it, which is a one-liner rather than a reason to give
+    up:</p>
+    <pre class="publish" id="done-mcp-stdio"></pre>
+    <p class="hint">The server answers in records -- who wrote what,
+    when, in which thread -- and never in message bodies. For the text of
+    a message it sends the agent to <code>b4 mbox</code>, which is why
+    the b4 setting above is worth doing first. That also keeps what
+    reaches a model small, which matters more on a local one.</p>
+    <p class="hint">There is no authentication, by design: what protects
+    this is the address. Keep the published port on
+    <code>127.0.0.1</code>, and reach it from another machine over an SSH
+    forward rather than by binding it to a public interface.</p>
+  </section>
+
+  <section>
+    <h2>Mail clients</h2>
+    <div id="done-mail"></div>
+  </section>
+
+  <section>
+    <h2>Get a shell in here</h2>
+    <p class="hint">podman names a container's hostname after its ID, not
+    after <code>--name</code>, so this is the right command whatever you
+    called it:</p>
+    <pre class="publish" id="done-exec"></pre>
+    <p class="hint">The configs worth editing by hand live on the
+    <code>/data</code> volume. Each one is watched: save a change and the
+    service that reads it picks it up within a few seconds, with no restart
+    from you.</p>
+    <dl class="kv" id="done-paths"></dl>
+    <p class="hint">The services themselves are supervised by loop scripts
+    in <code>/usr/local/bin</code>, so killing one is a restart -- a fresh
+    process is up within thirty seconds. Their output goes to
+    <code>podman logs</code>.</p>
+  </section>
+
+  <div class="bar">
+    <button id="done-setup" class="secondary">Change setup</button>
+    <span class="status" id="done-status"></span>
+  </div>
+</main>
+
+<script>
+const selected = new Map();
+let lastResults = [];
+let lastLimit = 0;
+const q = document.getElementById('q');
+const hint = document.getElementById('hint');
+const results = document.getElementById('results');
+const picked = document.getElementById('picked');
+const resultsSection = document.getElementById('results-section');
+const pickedSection = document.getElementById('picked-section');
+const count = document.getElementById('count');
+const save = document.getElementById('save');
+const status = document.getElementById('status');
+
+function describe(entry) {
+  const bits = [];
+  if (entry.lists && entry.lists.length) bits.push(entry.lists.join(', '));
+  if (entry.status) bits.push(entry.status);
+  return bits.join(' · ');
+}
+
+function makeRow(entry) {
+  const li = document.createElement('li');
+  const label = document.createElement('label');
+  label.className = 'row';
+
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.checked = selected.has(entry.name);
+
+  const text = document.createElement('div');
+  const name = document.createElement('div');
+  name.className = 'name';
+  name.textContent = entry.name;
+  text.append(name);
+
+  const meta = describe(entry);
+  if (meta) {
+    const sub = document.createElement('div');
+    sub.className = 'meta';
+    sub.textContent = meta;
+    text.append(sub);
+  }
+
+  box.addEventListener('change', () => {
+    if (box.checked) {
+      selected.set(entry.name, entry);
+    } else {
+      selected.delete(entry.name);
+    }
+    label.classList.toggle('picked', box.checked);
+    renderPicked();
+    markDirty();
+  });
+
+  label.classList.toggle('picked', box.checked);
+  label.append(box, text);
+  li.append(label);
+  return li;
+}
+
+function renderResults(entries, limit) {
+  lastResults = entries;
+  lastLimit = limit;
+  results.replaceChildren(...entries.map(makeRow));
+  resultsSection.hidden = entries.length === 0;
+  if (!limit) {
+    // No search behind this draw -- the list was redrawn to re-tick boxes,
+    // or cleared. Saying "the first 0 matches" would read as a search that
+    // found nothing.
+    hint.textContent = 'Type to search the MAINTAINERS file.';
+  } else if (entries.length === limit) {
+    hint.textContent = `Showing the first ${limit} matches -- narrow the search to see more.`;
+  } else {
+    hint.textContent = `${entries.length} match${entries.length === 1 ? '' : 'es'}.`;
+  }
+}
+
+function makeChip(entry) {
+  const li = document.createElement('li');
+  li.className = 'chip';
+
+  const name = document.createElement('span');
+  name.textContent = entry.name;
+
+  const drop = document.createElement('button');
+  drop.type = 'button';
+  drop.className = 'chip-drop';
+  drop.textContent = '×';
+  drop.title = `Remove ${entry.name}`;
+  drop.addEventListener('click', () => {
+    selected.delete(entry.name);
+    renderPicked();
+    // A result row for this entry may be on screen with its box still
+    // ticked, so redraw whatever the current search is showing.
+    renderResults(lastResults, lastLimit);
+    markDirty();
+  });
+
+  li.append(name, drop);
+  return li;
+}
+
+function renderPicked() {
+  picked.replaceChildren(...[...selected.values()].map(makeChip));
+  count.textContent = String(selected.size);
+  pickedSection.hidden = selected.size === 0;
+}
+
+function markDirty() {
+  save.disabled = selected.size === 0;
+  status.textContent = '';
+}
+
+let pending;
+q.addEventListener('input', () => {
+  clearTimeout(pending);
+  const term = q.value.trim();
+  if (!term) {
+    renderResults([], 0);
+    resultsSection.hidden = true;
+    hint.textContent = 'Type to search the MAINTAINERS file.';
+    return;
+  }
+  pending = setTimeout(async () => {
+    const res = await fetch('/api/subsystems?q=' + encodeURIComponent(term));
+    const data = await res.json();
+    renderResults(data.results, data.limit);
+  }, 150);
+});
+
+const pickScreen = document.getElementById('pick-screen');
+const identityScreen = document.getElementById('identity-screen');
+const identityInput = document.getElementById('identity-address');
+const identityNext = document.getElementById('identity-next');
+const identitySkip = document.getElementById('identity-skip');
+const identityStatus = document.getElementById('identity-status');
+const identityNote = document.getElementById('identity-note');
+const pickBack = document.getElementById('pick-back');
+let identity = {name: '', address: ''};
+
+// The answer to the first screen is carried onto the second as a line of
+// explanation, so a picker that arrives with boxes already ticked says who
+// ticked them and why.
+//
+// *applied* separates the two times this is said. Straight after answering,
+// the matches really are what is selected. On a later visit the selection
+// is whatever was saved -- possibly with a match deliberately dropped from
+// it -- so claiming they are selected would be telling the maintainer their
+// own choice was overruled.
+function renderIdentityNote(matches, applied) {
+  if (!identity.address) {
+    identityNote.hidden = true;
+    return;
+  }
+  if (!matches.length) {
+    identityNote.textContent =
+      `Nothing in MAINTAINERS lists ${identity.address} yet -- search for ` +
+      'the subsystems you want to follow.';
+  } else if (applied) {
+    const plural = matches.length === 1 ? 'subsystem lists' : 'subsystems list';
+    identityNote.textContent =
+      `${matches.length} ${plural} ${identity.address} as maintainer or ` +
+      'reviewer, and are selected below -- add or remove any you like.';
+  } else {
+    const plural = matches.length === 1 ? 'subsystem' : 'subsystems';
+    identityNote.textContent =
+      `MAINTAINERS lists ${identity.address} on ${matches.length} ` +
+      `${plural}; what is selected below is what you saved.`;
+  }
+  identityNote.hidden = false;
+}
+
+// Added to the selection rather than made into it: somebody coming back
+// through this screen to correct a typo should not lose the subsystems
+// they picked by hand, and un-ticking one is a click away either way.
+function applyIdentityMatches(matches) {
+  for (const entry of matches) selected.set(entry.name, entry);
+  renderPicked();
+  // A result row for one of these may already be on screen, unticked.
+  renderResults(lastResults, lastLimit);
+  markDirty();
+}
+
+function openPicker() {
+  identityScreen.hidden = true;
+  doneScreen.hidden = true;
+  pickScreen.hidden = false;
+}
+
+async function saveIdentity() {
+  const raw = identityInput.value.trim();
+  if (!raw) {
+    identityStatus.textContent = 'Enter the address you are listed under, or skip.';
+    return;
+  }
+  identityNext.disabled = true;
+  identityStatus.textContent = 'Looking you up in MAINTAINERS...';
+  try {
+    const res = await fetch('/api/identity', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({address: raw}),
+    });
+    if (res.status === 422) {
+      identityStatus.textContent = 'That does not look like an email address.';
+      return;
+    }
+    if (!res.ok) throw new Error(res.statusText);
+    const data = await res.json();
+    identity = data.identity;
+    identityInput.value = identity.address;
+    identityStatus.textContent = '';
+    renderIdentityNote(data.matches, true);
+    applyIdentityMatches(data.matches);
+    openPicker();
+  } catch (err) {
+    identityStatus.textContent = 'Could not save that: ' + err.message;
+  } finally {
+    identityNext.disabled = false;
+  }
+}
+
+identityNext.addEventListener('click', saveIdentity);
+identityInput.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') saveIdentity();
+});
+identityInput.addEventListener('input', () => {
+  identityStatus.textContent = '';
+});
+
+// Skipping saves nothing: an address nobody confirmed is worse than no
+// address at all, since everything downstream would trust it.
+identitySkip.addEventListener('click', () => {
+  identityStatus.textContent = '';
+  openPicker();
+});
+
+pickBack.addEventListener('click', () => {
+  status.textContent = '';
+  pickScreen.hidden = true;
+  identityScreen.hidden = false;
+});
+
+const genScreen = document.getElementById('generate-screen');
+const genList = document.getElementById('gen-list');
+const genStatus = document.getElementById('gen-status');
+const sinceInput = document.getElementById('since');
+const generateBtn = document.getElementById('generate');
+const backBtn = document.getElementById('back');
+const toReposBtn = document.getElementById('to-repos');
+
+// One entry per subsystem: {li, stateEl, details, summary, pre, ok}. Built
+// once per generate run and mutated in place as stream events arrive, so a
+// maintainer watching a long lei query never loses their place to a
+// full-list redraw.
+let genItems = new Map();
+
+function renderGenList(names, imported) {
+  const done = new Set(imported || []);
+  genItems = new Map();
+  genList.replaceChildren(...names.map((name) => {
+    const li = document.createElement('li');
+    li.className = 'gen-item' + (done.has(name) ? ' ok' : '');
+
+    const row = document.createElement('div');
+    row.className = 'gen-item-head';
+    const nameEl = document.createElement('span');
+    nameEl.textContent = name;
+    const stateEl = document.createElement('span');
+    stateEl.className = 'state';
+    stateEl.textContent = done.has(name) ? 'Already imported' : 'Pending';
+    row.append(nameEl, stateEl);
+    li.append(row);
+
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = 'Details';
+    const pre = document.createElement('pre');
+    details.append(summary, pre);
+    li.append(details);
+    details.hidden = true;
+
+    genItems.set(name, {li, stateEl, details, pre});
+    return li;
+  }));
+}
+
+function genStart(name) {
+  const item = genItems.get(name);
+  if (!item) return;
+  item.li.className = 'gen-item running';
+  item.stateEl.textContent = 'Running...';
+  item.pre.textContent = '';
+  item.details.hidden = false;
+  item.details.open = true;
+}
+
+function genLine(name, text) {
+  const item = genItems.get(name);
+  if (!item) return;
+  item.pre.textContent += (item.pre.textContent ? '\n' : '') + text;
+  item.pre.scrollTop = item.pre.scrollHeight;
+}
+
+function genDone(name, ok) {
+  const item = genItems.get(name);
+  if (!item) return;
+  item.li.className = 'gen-item' + (ok ? ' ok' : ' fail');
+  item.stateEl.textContent = ok ? 'Done' : 'Failed';
+  item.details.hidden = !item.pre.textContent;
+  item.details.open = !ok;
+}
+
+save.addEventListener('click', async () => {
+  save.disabled = true;
+  status.textContent = 'Saving...';
+  try {
+    const res = await fetch('/api/selection', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({selected: [...selected.keys()]}),
+    });
+    if (!res.ok) throw new Error(res.statusText);
+    await res.json();
+    status.textContent = '';
+    pickScreen.hidden = true;
+    genScreen.hidden = false;
+    // Reattach rather than clear, in case a run started on an earlier
+    // visit to this screen is still going.
+    const gen = await resumeGenStatus();
+    if (!gen || gen.status === 'idle') {
+      openGenScreen([...selected.keys()], gen ? gen.imported : []);
+    }
+  } catch (err) {
+    status.textContent = 'Could not save: ' + err.message;
+    save.disabled = false;
+  }
+});
+
+backBtn.addEventListener('click', () => {
+  genScreen.hidden = true;
+  pickScreen.hidden = false;
+  save.disabled = false;
+});
+
+// Tracking runs detached from the request that starts it -- one subsystem
+// is mostly one lei query, and importing six months of a busy list takes
+// minutes -- so progress comes from polling /api/generate/status rather
+// than from a held-open stream, exactly as the mirror screen below does.
+// That's what makes closing the tab, reloading, or losing the connection
+// cost nothing but the view: the run carries on either way.
+let genPollTimer = null;
+let genEventCursor = 0;
+let genOks = new Map();
+
+function stopGenPolling() {
+  if (genPollTimer) {
+    clearInterval(genPollTimer);
+    genPollTimer = null;
+  }
+}
+
+function applyGenEvent(event) {
+  if (event.type === 'start') genStart(event.name);
+  else if (event.type === 'line') genLine(event.name, event.text);
+  else if (event.type === 'done') {
+    genDone(event.name, event.ok);
+    genOks.set(event.name, event.ok);
+  }
+}
+
+function genFinished() {
+  const failed = [...genOks.values()].filter((ok) => !ok).length;
+  genStatus.textContent = failed
+    ? `${failed} of ${genOks.size} failed -- see details above.`
+    : 'Archives imported.';
+  // Leave the button disabled on full success -- re-running would just
+  // redo the same lei queries. A failure re-enables it so the maintainer
+  // can retry.
+  generateBtn.disabled = failed === 0;
+  sinceInput.disabled = failed === 0;
+}
+
+async function pollGenStatus() {
+  // A poll that fails while the dashboard is restarting is expected and
+  // transient -- swallow it and let the next tick try again, rather than
+  // leaving an unhandled rejection behind every second.
+  let data;
+  try {
+    const res = await fetch('/api/generate/status?since=' + genEventCursor);
+    if (!res.ok) return;
+    data = await res.json();
+  } catch (err) {
+    return;
+  }
+
+  for (const event of data.events) applyGenEvent(event);
+  genEventCursor = data.next;
+
+  // 'idle' is terminal here too, not just done/failed: run state lives in
+  // the dashboard process rather than on disk, so restarting the container
+  // mid-run resets it, and a page left open would otherwise poll forever
+  // without ever seeing a status it recognises as finished.
+  if (data.status === 'idle') {
+    stopGenPolling();
+    genStatus.textContent = 'Setup was interrupted -- the container restarted. Run it again when ready.';
+    generateBtn.disabled = false;
+    sinceInput.disabled = false;
+    return;
+  }
+
+  if (data.status === 'done' || data.status === 'failed') {
+    stopGenPolling();
+    genFinished();
+  }
+}
+
+// Called on load and when the generate screen opens, in case a run from
+// before a reload is still going or already finished -- the maintainer
+// should land back on the progress they left, not on a screen that looks
+// like nothing ever happened.
+async function resumeGenStatus() {
+  let data;
+  try {
+    const res = await fetch('/api/generate/status?since=0');
+    if (!res.ok) return null;
+    data = await res.json();
+  } catch (err) {
+    return null;
+  }
+  // Returned rather than acted on: there is no run to reattach to, but the
+  // payload still says which archives are on disk, and the caller opening
+  // this screen needs that. Callers treat a null and an idle alike when
+  // deciding whether a run was picked up.
+  if (data.status === 'idle') return data;
+
+  identityScreen.hidden = true;
+  pickScreen.hidden = true;
+  reposScreen.hidden = true;
+  genScreen.hidden = false;
+  renderGenList([...selected.keys()], data.imported);
+  genOks = new Map();
+  genEventCursor = 0;
+  for (const event of data.events) applyGenEvent(event);
+  genEventCursor = data.next;
+
+  if (data.status === 'running') {
+    generateBtn.disabled = true;
+    sinceInput.disabled = true;
+    toReposBtn.disabled = false;
+    genStatus.textContent = 'Importing in the background -- you can move on.';
+    stopGenPolling();
+    genPollTimer = setInterval(pollGenStatus, 1000);
+  } else {
+    toReposBtn.disabled = false;
+    genFinished();
+  }
+  return data;
+}
+
+// Opening the screen with no run attached to it -- which is the normal
+// case for a maintainer coming back through "Change setup" long after the
+// import finished.
+//
+// Next is not simply disabled here for want of a run to move on from.
+// That only holds for a first run. Run state lives in the dashboard
+// process and resets with the container, while the archives live on the
+// volume and don't, so a maintainer with every archive already on disk
+// would be told to import them again and given no other way forward. Ask
+// the volume instead: everything already imported means there is nothing
+// to wait for, and Next opens.
+//
+// Import stays enabled either way, since it is also how the time range
+// gets widened.
+function openGenScreen(names, imported) {
+  const done = new Set(imported || []);
+  const missing = names.filter((name) => !done.has(name));
+  renderGenList(names, imported);
+  genOks = new Map();
+  genEventCursor = 0;
+  generateBtn.disabled = false;
+  sinceInput.disabled = false;
+  toReposBtn.disabled = missing.length > 0;
+  if (!names.length) {
+    genStatus.textContent = '';
+  } else if (!missing.length) {
+    genStatus.textContent = 'Already imported -- import again to change the time range.';
+  } else if (done.size) {
+    genStatus.textContent = `${missing.length} of ${names.length} still to import.`;
+  } else {
+    genStatus.textContent = '';
+  }
+}
+
+generateBtn.addEventListener('click', async () => {
+  generateBtn.disabled = true;
+  sinceInput.disabled = true;
+  // Importing six months of a busy list is minutes of lei queries, and
+  // nothing on the next screen depends on them having finished -- so Next
+  // opens as soon as the run is under way rather than when it ends. The
+  // maintainer can watch it here or carry on; the run doesn't care.
+  toReposBtn.disabled = false;
+  genStatus.textContent = 'Importing in the background -- you can move on.';
+  const names = [...selected.keys()];
+  renderGenList(names, []);
+  genOks = new Map();
+  genEventCursor = 0;
+
+  try {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({selected: names, since: sinceInput.value.trim()}),
+    });
+    if (!res.ok) throw new Error(res.statusText);
+    await res.json();
+    stopGenPolling();
+    genPollTimer = setInterval(pollGenStatus, 1000);
+  } catch (err) {
+    genStatus.textContent = 'Could not start the import: ' + err.message;
+    sinceInput.disabled = false;
+    generateBtn.disabled = false;
+    // Nothing started, so nothing to move on from.
+    toReposBtn.disabled = true;
+  }
+});
+
+const reposScreen = document.getElementById('repos-screen');
+const repoQ = document.getElementById('repo-q');
+const repoHint = document.getElementById('repo-hint');
+const repoResults = document.getElementById('repo-results');
+const repoPicked = document.getElementById('repo-picked');
+const repoResultsSection = document.getElementById('repo-results-section');
+const repoPickedSection = document.getElementById('repo-picked-section');
+const repoCount = document.getElementById('repo-count');
+const saveRepos = document.getElementById('save-repos');
+const repoStatus = document.getElementById('repo-status');
+const reposBackBtn = document.getElementById('repos-back');
+const mirrorSection = document.getElementById('mirror-section');
+const mirrorList = document.getElementById('mirror-list');
+const mirrorRepos = document.getElementById('mirror-repos');
+const mirrorLogDetails = document.getElementById('mirror-log-details');
+const mirrorLog = document.getElementById('mirror-log');
+const toDaemonsBtn = document.getElementById('to-daemons');
+
+const repoSelected = new Map();
+let lastRepoResults = [];
+let lastRepoLimit = 0;
+
+function describeRepo(entry) {
+  const bits = [];
+  if (entry.description) bits.push(entry.description);
+  if (entry.owner) bits.push(entry.owner);
+  return bits.join(' · ');
+}
+
+function makeRepoRow(entry) {
+  const li = document.createElement('li');
+  const label = document.createElement('label');
+  label.className = 'row';
+
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.checked = repoSelected.has(entry.path);
+
+  const text = document.createElement('div');
+  const name = document.createElement('div');
+  name.className = 'name';
+  name.textContent = entry.path;
+  text.append(name);
+
+  const meta = describeRepo(entry);
+  if (meta) {
+    const sub = document.createElement('div');
+    sub.className = 'meta';
+    sub.textContent = meta;
+    text.append(sub);
+  }
+
+  box.addEventListener('change', () => {
+    if (box.checked) {
+      repoSelected.set(entry.path, entry);
+    } else {
+      repoSelected.delete(entry.path);
+    }
+    label.classList.toggle('picked', box.checked);
+    renderRepoPicked();
+  });
+
+  label.classList.toggle('picked', box.checked);
+  label.append(box, text);
+  li.append(label);
+  return li;
+}
+
+function renderRepoResults(entries, limit) {
+  lastRepoResults = entries;
+  lastRepoLimit = limit;
+  repoResults.replaceChildren(...entries.map(makeRepoRow));
+  repoResultsSection.hidden = entries.length === 0;
+  if (entries.length === limit) {
+    repoHint.textContent = `Showing the first ${limit} matches -- narrow the search to see more.`;
+  } else {
+    repoHint.textContent = `${entries.length} match${entries.length === 1 ? '' : 'es'}.`;
+  }
+}
+
+function makeRepoChip(entry) {
+  const li = document.createElement('li');
+  li.className = 'chip';
+
+  const name = document.createElement('span');
+  name.textContent = entry.path;
+
+  const drop = document.createElement('button');
+  drop.type = 'button';
+  drop.className = 'chip-drop';
+  drop.textContent = '×';
+  drop.title = `Remove ${entry.path}`;
+  drop.addEventListener('click', () => {
+    repoSelected.delete(entry.path);
+    renderRepoPicked();
+    // A result row for this entry may be on screen with its box still
+    // ticked, so redraw whatever the current search is showing.
+    renderRepoResults(lastRepoResults, lastRepoLimit);
+  });
+
+  li.append(name, drop);
+  return li;
+}
+
+function renderRepoPicked() {
+  repoPicked.replaceChildren(...[...repoSelected.values()].map(makeRepoChip));
+  repoCount.textContent = String(repoSelected.size);
+  repoPickedSection.hidden = repoSelected.size === 0;
+  mirrorRepos.disabled = repoSelected.size === 0;
+}
+
+// One row per selected repo, redrawn from each poll. grokmirror's own
+// manifest says which are finished, so this is the real answer to "is it
+// working" rather than a guess read out of grok-pull's output.
+function renderMirrorRepos(repos, running) {
+  mirrorSection.hidden = repos.length === 0;
+  mirrorList.replaceChildren(...repos.map((repo) => {
+    const li = document.createElement('li');
+    const row = document.createElement('div');
+    row.className = 'gen-item-head';
+
+    const nameEl = document.createElement('span');
+    nameEl.textContent = repo.path;
+    const stateEl = document.createElement('span');
+    stateEl.className = 'state';
+
+    if (repo.mirrored) {
+      li.className = 'gen-item ok';
+      stateEl.textContent = 'Mirrored';
+    } else if (running) {
+      li.className = 'gen-item running';
+      stateEl.textContent = 'Cloning...';
+    } else {
+      li.className = 'gen-item';
+      stateEl.textContent = 'Queued';
+    }
+
+    row.append(nameEl, stateEl);
+    li.append(row);
+    return li;
+  }));
+}
+
+// grok-pull's file log, e.g.
+//   pull[36242] 2026-09-16 17:23:28,125 - INFO -  manifest: sleeping 300s
+// The level is worth keeping -- it's how an error gets noticed -- but the
+// pid and timestamp are noise on a screen that's watching live.
+const MIRROR_LINE = /^\S+ \d{4}-\d\d-\d\d \S+ - (\w+) - \s*(.*)$/;
+
+function mirrorLine(text) {
+  const parsed = MIRROR_LINE.exec(text);
+  const level = parsed ? parsed[1] : '';
+  const message = parsed ? parsed[2] : text;
+  if (level === 'ERROR' || level === 'CRITICAL') {
+    mirrorErrors.push(message);
+  }
+  mirrorLog.textContent += (mirrorLog.textContent ? '\n' : '') + message;
+  mirrorLog.scrollTop = mirrorLog.scrollHeight;
+  mirrorLogDetails.hidden = false;
+}
+
+let repoPending;
+repoQ.addEventListener('input', () => {
+  clearTimeout(repoPending);
+  const term = repoQ.value.trim();
+  if (!term) {
+    renderRepoResults([], 0);
+    repoResultsSection.hidden = true;
+    repoHint.textContent = "Type to search kernel.org's repository list.";
+    return;
+  }
+  repoPending = setTimeout(async () => {
+    const res = await fetch('/api/repos?q=' + encodeURIComponent(term));
+    const data = await res.json();
+    renderRepoResults(data.results, data.limit);
+  }, 150);
+});
+
+// Loaded once per page load: merges the maintainer's saved repo selection
+// with T:-line suggestions from their chosen subsystems, so re-visiting
+// this screen (Back then Next again) doesn't re-add something they'd
+// already unchecked in this session.
+let repoScreenLoaded = false;
+
+async function loadRepoScreen() {
+  if (repoScreenLoaded) return;
+  repoScreenLoaded = true;
+  const [savedRes, suggestedRes] = await Promise.all([
+    fetch('/api/repo-selection'),
+    fetch('/api/repos/suggested'),
+  ]);
+  const saved = await savedRes.json();
+  const suggested = await suggestedRes.json();
+
+  const byPath = new Map(suggested.results.map((entry) => [entry.path, entry]));
+  for (const path of saved.selected) {
+    if (!byPath.has(path)) byPath.set(path, {path});
+  }
+  for (const entry of byPath.values()) {
+    repoSelected.set(entry.path, entry);
+  }
+  renderRepoPicked();
+  await resumeMirrorStatus();
+}
+
+toReposBtn.addEventListener('click', async () => {
+  genScreen.hidden = true;
+  reposScreen.hidden = false;
+  await loadRepoScreen();
+});
+
+reposBackBtn.addEventListener('click', () => {
+  stopMirrorPolling();
+  reposScreen.hidden = true;
+  genScreen.hidden = false;
+});
+
+saveRepos.addEventListener('click', async () => {
+  saveRepos.disabled = true;
+  repoStatus.textContent = 'Saving...';
+  try {
+    const res = await fetch('/api/repo-selection', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({selected: [...repoSelected.keys()]}),
+    });
+    if (!res.ok) throw new Error(res.statusText);
+    await res.json();
+    repoStatus.textContent = 'Selection saved.';
+  } catch (err) {
+    repoStatus.textContent = 'Could not save: ' + err.message;
+  } finally {
+    saveRepos.disabled = false;
+  }
+});
+
+// Mirroring is handed off, never waited on. Starting it writes
+// grokmirror.conf and returns; grok-pull-loop.sh notices within seconds
+// and (re)starts grok-pull, which then keeps the selection up to date for
+// as long as the container runs. So there is no completion to sit here
+// for, and the screen answers a narrower question instead: did it start,
+// how many repos are through, and has anything gone wrong. Next is open
+// throughout.
+//
+// Polling continues while the maintainer is on this screen and stops when
+// they leave it -- there's no end state to catch, and the status is read
+// off the volume, so picking it up again later costs nothing.
+let mirrorPollTimer = null;
+let mirrorLogCursor = 0;
+let mirrorErrors = [];
+
+function stopMirrorPolling() {
+  if (mirrorPollTimer) {
+    clearInterval(mirrorPollTimer);
+    mirrorPollTimer = null;
+  }
+}
+
+function describeMirror(data) {
+  if (mirrorErrors.length) {
+    return `${mirrorErrors.length} error(s) -- see grok-pull output below.`;
+  }
+  if (data.state === 'idle') return '';
+  if (data.mirrored === data.total) {
+    return `All ${data.total} repo(s) mirrored; keeping them up to date.`;
+  }
+  if (data.state === 'starting') return 'Starting grok-pull...';
+  return `Mirroring: ${data.mirrored} of ${data.total} repo(s) done so far.`;
+}
+
+async function pollMirrorStatus() {
+  // A poll that fails while the dashboard is restarting is expected and
+  // transient -- swallow it and let the next tick try again, rather than
+  // leaving an unhandled rejection behind every second.
+  let data;
+  try {
+    const res = await fetch('/api/grokmirror/status?since=' + mirrorLogCursor);
+    if (!res.ok) return;
+    data = await res.json();
+  } catch (err) {
+    return;
+  }
+
+  for (const line of data.lines) mirrorLine(line);
+  mirrorLogCursor = data.next;
+  renderMirrorRepos(data.repos, data.state === 'running');
+  repoStatus.textContent = describeMirror(data);
+}
+
+// Called when the repo screen loads. A mirror started on an earlier visit,
+// before a reload, or in a previous run of the container is all the same
+// thing to look at -- the state is on the volume, not in this page.
+async function resumeMirrorStatus() {
+  let data;
+  try {
+    const res = await fetch('/api/grokmirror/status?since=0');
+    if (!res.ok) return;
+    data = await res.json();
+  } catch (err) {
+    return;
+  }
+  if (data.state === 'idle') return;
+
+  mirrorLogCursor = 0;
+  mirrorErrors = [];
+  mirrorLog.textContent = '';
+  for (const line of data.lines) mirrorLine(line);
+  mirrorLogCursor = data.next;
+  renderMirrorRepos(data.repos, data.state === 'running');
+  repoStatus.textContent = describeMirror(data);
+
+  stopMirrorPolling();
+  mirrorPollTimer = setInterval(pollMirrorStatus, 1000);
+}
+
+mirrorRepos.addEventListener('click', async () => {
+  mirrorRepos.disabled = true;
+  repoStatus.textContent = 'Starting...';
+
+  try {
+    const res = await fetch('/api/grokmirror/pull', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({selected: [...repoSelected.keys()]}),
+    });
+    if (!res.ok) throw new Error(res.statusText);
+    await res.json();
+    // Fresh start: the old log is about a previous selection.
+    mirrorLogCursor = 0;
+    mirrorErrors = [];
+    mirrorLog.textContent = '';
+    stopMirrorPolling();
+    mirrorPollTimer = setInterval(pollMirrorStatus, 1000);
+    await pollMirrorStatus();
+  } catch (err) {
+    repoStatus.textContent = 'Could not start mirroring: ' + err.message;
+  } finally {
+    // Re-enabled on purpose: changing the selection and pressing this
+    // again is how a repo gets added or dropped, and grok-pull-loop.sh
+    // restarts grok-pull on the rewritten config.
+    mirrorRepos.disabled = repoSelected.size === 0;
+  }
+});
+
+// IMAP and NNTP are served by the same public-inbox-netd that serves the
+// web port, so this screen writes a list of names and serve-web.sh turns
+// it into extra listeners. Applying is instant here; what isn't instant is
+// the podman flag it takes to reach a newly bound port from outside the
+// container, which is why that gets a section of its own rather than a
+// footnote.
+const daemonsScreen = document.getElementById('daemons-screen');
+const daemonList = document.getElementById('daemon-list');
+const daemonStatus = document.getElementById('daemon-status');
+const daemonsBackBtn = document.getElementById('daemons-back');
+const saveDaemons = document.getElementById('save-daemons');
+const publishSection = document.getElementById('publish-section');
+const publishFlags = document.getElementById('publish-flags');
+
+const daemonEnabled = new Set();
+let daemonsLoaded = false;
+
+function renderPublishHint(daemons) {
+  const on = daemons.filter((daemon) => daemonEnabled.has(daemon.id));
+  publishSection.hidden = on.length === 0;
+  publishFlags.textContent = on.map((daemon) => daemon.publish).join(' \\\n');
+}
+
+function renderDaemons(daemons) {
+  daemonList.replaceChildren(...daemons.map((daemon) => {
+    const li = document.createElement('li');
+    const label = document.createElement('label');
+    label.className = 'toggle-row' + (daemonEnabled.has(daemon.id) ? ' on' : '');
+
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = daemonEnabled.has(daemon.id);
+    box.addEventListener('change', () => {
+      if (box.checked) daemonEnabled.add(daemon.id);
+      else daemonEnabled.delete(daemon.id);
+      label.classList.toggle('on', box.checked);
+      renderPublishHint(daemons);
+      daemonStatus.textContent = 'Not applied yet.';
+    });
+
+    const text = document.createElement('div');
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.append(daemon.label + ' ');
+    const port = document.createElement('span');
+    port.className = 'port';
+    port.textContent = 'port ' + daemon.port;
+    name.append(port);
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = daemon.summary;
+    text.append(name, meta);
+
+    label.append(box, text);
+    li.append(label);
+    return li;
+  }));
+  renderPublishHint(daemons);
+}
+
+async function loadDaemons() {
+  if (daemonsLoaded) return;
+  const res = await fetch('/api/daemons');
+  const data = await res.json();
+  daemonEnabled.clear();
+  for (const daemon of data.daemons) {
+    if (daemon.enabled) daemonEnabled.add(daemon.id);
+  }
+  renderDaemons(data.daemons);
+  daemonsLoaded = true;
+}
+
+toDaemonsBtn.addEventListener('click', async () => {
+  stopMirrorPolling();
+  reposScreen.hidden = true;
+  daemonsScreen.hidden = false;
+  await loadDaemons();
+});
+
+daemonsBackBtn.addEventListener('click', async () => {
+  daemonsScreen.hidden = true;
+  reposScreen.hidden = false;
+  await resumeMirrorStatus();
+});
+
+saveDaemons.addEventListener('click', async () => {
+  saveDaemons.disabled = true;
+  daemonStatus.textContent = 'Applying...';
+  try {
+    const res = await fetch('/api/daemons', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled: [...daemonEnabled]}),
+    });
+    if (!res.ok) throw new Error(res.statusText);
+    const data = await res.json();
+    renderDaemons(data.daemons);
+    daemonStatus.textContent = daemonEnabled.size
+      ? 'Applied -- the web port restarts briefly to pick this up.'
+      : 'Applied -- all optional protocols are off.';
+  } catch (err) {
+    daemonStatus.textContent = 'Could not apply: ' + err.message;
+  } finally {
+    saveDaemons.disabled = false;
+  }
+});
+
+// The last setup screen, and the front page of a container that is already
+// set up -- one screen for both, because they answer the same question:
+// what is this thing serving and how do I point my tools at it?
+//
+// Every value on it comes from /api/summary rather than being written into
+// the markup above. The URLs carry whatever public base this container was
+// told to advertise, the folder names are the ones public-inbox really
+// registered (an inbox whose newsgroup was rejected has no folder, and
+// mustn't be listed as if it had one), and the exec command carries this
+// container's own ID.
+const doneScreen = document.getElementById('done-screen');
+const toDoneBtn = document.getElementById('to-done');
+const doneSetupBtn = document.getElementById('done-setup');
+const doneStatus = document.getElementById('done-status');
+
+// `count' is already taken by the picker's counter element.
+function plural(n, one, many) {
+  return n + ' ' + (n === 1 ? one : many);
+}
+
+// How many group names to show before folding the rest away. A maintainer
+// with five subsystems wants to see all ten names; one with sixty wants to
+// know the naming scheme and get on with it, and a wall of them buries the
+// connection settings above. Nothing is hidden -- the rest are one click
+// away -- but the screen stays the same size either way.
+const GROUPS_SHOWN = 5;
+
+// A bulleted list of newsgroup names, with everything past GROUPS_SHOWN in
+// a <details>. Returns the elements to append rather than appending them,
+// so the caller keeps control of the order.
+function groupList(names) {
+  const list = document.createElement('ul');
+  list.className = 'groups';
+  const bullet = (name) => {
+    const li = document.createElement('li');
+    const code = document.createElement('code');
+    code.textContent = name;
+    li.append(code);
+    return li;
+  };
+
+  list.append(...names.slice(0, GROUPS_SHOWN).map(bullet));
+  if (names.length <= GROUPS_SHOWN) {
+    return [list];
+  }
+
+  const rest = names.slice(GROUPS_SHOWN);
+  const details = document.createElement('details');
+  const summary = document.createElement('summary');
+  summary.textContent = '... and ' + rest.length + ' more';
+  const more = document.createElement('ul');
+  more.className = 'groups';
+  more.append(...rest.map(bullet));
+  details.append(summary, more);
+  return [list, details];
+}
+
+function renderDoneMail(summary) {
+  const host = new URL(summary.base).hostname;
+  const groups = summary.inboxes.filter((inbox) => inbox.newsgroup);
+  const blocks = [];
+
+  for (const daemon of summary.daemons) {
+    const block = document.createElement('div');
+    block.className = 'mail-block';
+
+    if (!daemon.enabled) {
+      const off = document.createElement('p');
+      off.className = 'hint';
+      off.textContent = daemon.label + ' is off. Turn it on under '
+        + '"Change setup", then republish the port.';
+      block.append(off);
+      blocks.push(block);
+      continue;
+    }
+
+    const head = document.createElement('div');
+    head.className = 'name';
+    head.textContent = daemon.label;
+    const dl = document.createElement('dl');
+    dl.className = 'kv';
+    const rows = [
+      ['Server', host],
+      ['Port', String(daemon.port)],
+      ['Encryption', 'None -- it is a loopback connection'],
+      // PublicInbox::IMAP's cmd_login ignores both arguments, and NNTP has
+      // no AUTHINFO at all. Saying "anything" is not a simplification.
+      ['Username', 'Anything at all; the server ignores it'],
+      ['Password', 'Anything at all; the server ignores it too'],
+    ];
+    for (const [key, value] of rows) {
+      const dt = document.createElement('dt');
+      dt.textContent = key;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      dl.append(dt, dd);
+    }
+    block.append(head, dl);
+    blocks.push(block);
+  }
+
+  if (groups.length) {
+    const lede = document.createElement('p');
+    lede.className = 'hint';
+    lede.textContent = summary.daemons.some((daemon) => daemon.enabled)
+      ? 'Your archives are available as folders (IMAP) or groups (NNTP):'
+      : 'Once a protocol is on, your archives are available as folders '
+        + '(IMAP) or groups (NNTP):';
+    blocks.push(lede, ...groupList(groups.map((inbox) => inbox.newsgroup)));
+
+    const tail = document.createElement('p');
+    tail.className = 'hint';
+    tail.textContent = 'IMAP nests them by the dots in the name, so they '
+      + 'arrive as a tree rather than a flat list. Everything is read-only.';
+    blocks.push(tail);
+  } else {
+    const note = document.createElement('p');
+    note.className = 'hint';
+    note.textContent = 'No archives are registered yet, so there is nothing '
+      + 'to subscribe to. They show up here once the import has run.';
+    blocks.push(note);
+  }
+
+  document.getElementById('done-mail').replaceChildren(...blocks);
+}
+
+// Whose container this is. Said on the last screen as well as the first
+// because this is the screen a maintainer comes back to, and an address
+// typed once months ago is exactly the kind of thing that turns out to
+// have a typo in it -- shown here, that is one click from fixed.
+function renderDoneIdentity(identity) {
+  const doneIdentity = document.getElementById('done-identity');
+  if (identity && identity.address) {
+    const who = identity.name
+      ? `${identity.name} <${identity.address}>`
+      : identity.address;
+    doneIdentity.textContent = `Set up for ${who}.`;
+    return;
+  }
+  // Skipping the first screen is allowed, so this is a standing offer
+  // rather than a complaint.
+  doneIdentity.textContent = 'No address on file for you yet -- add one '
+    + 'under "Change setup" and this container can tell your mail from '
+    + 'everybody else\'s.';
+}
+
+function renderDone(summary) {
+  const base = summary.base.replace(/\/$/, '');
+  document.getElementById('done-base').textContent = base;
+  renderDoneIdentity(summary.identity);
+
+  const lore = document.getElementById('done-lore');
+  lore.href = summary.lore;
+  document.getElementById('done-lore-meta').textContent = summary.inboxes.length
+    ? plural(summary.inboxes.length, 'inbox', 'inboxes')
+      + ', plus /all/ across every one of them'
+    : 'Nothing imported yet';
+
+  const cgit = document.getElementById('done-cgit');
+  cgit.href = summary.cgit;
+  document.getElementById('done-cgit-meta').textContent = summary.repos.length
+    ? plural(summary.repos.length, 'tree', 'trees') + ', mirrored and kept up to date'
+    : 'Nothing mirrored yet';
+
+  // Remotes, one repository at a time, rather than a global
+  // url.<base>.insteadOf rewrite. The rewrite is tempting -- one command,
+  // every clone on the machine -- and it misbehaves in ways that are hard
+  // to attribute once it is in place: anything not on this mirror stops
+  // fetching entirely instead of falling back, and the rewrite applies to
+  // every kernel.org URL git handles, including ones that were never meant
+  // to become a fetch, like the URLs in a pull request. A remote is
+  // explicit about which repository it changes and visible in
+  // `git remote -v' when it needs explaining.
+  //
+  // Shown against a tree actually on this mirror where there is one, so
+  // the commands can be copied as they stand rather than adapted.
+  const sample = summary.repos.length ? summary.repos[0].path : '/pub/scm/\u2026';
+  document.getElementById('done-git-remote').textContent =
+    `git remote add local ${base}${sample}`;
+  // Gitolite paths carry neither the leading slash nor the .git suffix.
+  const gitolite = sample.replace(/^\//, '').replace(/\.git$/, '');
+  document.getElementById('done-git-origin').textContent = [
+    `git remote set-url --push origin git@gitolite.kernel.org:${gitolite}`,
+    `git remote set-url origin ${base}${sample}`,
+  ].join('\n');
+  document.getElementById('done-git-lede').textContent = summary.repos.length
+    ? 'As long as this container has networking, the trees below keep'
+      + ' themselves up to date. Point an existing clone at one and fetches'
+      + ' come off this machine instead of going out to kernel.org.'
+    : 'Nothing is mirrored yet, so the paths below are only a shape to'
+      + ' follow. Mirror a tree and its real path shows up here.';
+
+  const repoDetails = document.getElementById('done-repos-details');
+  repoDetails.hidden = summary.repos.length === 0;
+  document.getElementById('done-repo-count').textContent = summary.repos.length;
+  document.getElementById('done-repos').replaceChildren(
+    ...summary.repos.map((repo) => {
+      const li = document.createElement('li');
+      li.textContent = repo.clone;
+      return li;
+    }));
+
+  document.getElementById('done-b4').textContent = [
+    `git config --global b4.midmask '${summary.b4.midmask}'`,
+    `git config --global b4.linkmask '${summary.b4.linkmask}'`,
+  ].join('\n');
+
+  // `maintainer-container' is only the handle the agent will show the
+  // tools under; it is not sent anywhere and nothing on this side reads it
+  // back. It is deliberately not `lore': these tools answer from the
+  // archive in this container, not from lore.kernel.org, and a handle that
+  // said otherwise would mislead every agent that read it.
+  document.getElementById('done-mcp-url').textContent = summary.mcp.url;
+  document.getElementById('done-mcp-json').textContent = JSON.stringify(
+    { mcpServers: { 'maintainer-container': { type: 'http', url: summary.mcp.url } } },
+    null, 2);
+  // One example, not a catalogue: every client spells this differently
+  // and the list would be stale within a release. The point of the line
+  // is the shape -- transport plus URL -- not this particular client.
+  document.getElementById('done-mcp-cli').textContent =
+    `claude mcp add --transport http maintainer-container ${summary.mcp.url}`;
+  document.getElementById('done-mcp-stdio').textContent =
+    `npx -y mcp-remote ${summary.mcp.url}`;
+
+  document.getElementById('done-exec').textContent =
+    `podman exec -it ${summary.container} bash`;
+
+  const labels = {
+    publicinbox: 'Archives served',
+    grokmirror: 'Trees mirrored',
+    korgalore: 'Subsystems tracked',
+  };
+  const paths = [];
+  for (const [key, label] of Object.entries(labels)) {
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    const code = document.createElement('code');
+    code.textContent = summary.paths[key];
+    dd.append(code);
+    paths.push(dt, dd);
+  }
+  document.getElementById('done-paths').replaceChildren(...paths);
+
+  renderDoneMail(summary);
+}
+
+async function showDone() {
+  const res = await fetch('/api/summary');
+  if (!res.ok) throw new Error(res.statusText);
+  const summary = await res.json();
+  renderDone(summary);
+  stopMirrorPolling();
+  identityScreen.hidden = true;
+  pickScreen.hidden = true;
+  genScreen.hidden = true;
+  reposScreen.hidden = true;
+  daemonsScreen.hidden = true;
+  doneScreen.hidden = false;
+  return summary;
+}
+
+toDoneBtn.addEventListener('click', async () => {
+  toDoneBtn.disabled = true;
+  try {
+    await showDone();
+  } catch (err) {
+    daemonStatus.textContent = 'Could not load the summary: ' + err.message;
+  } finally {
+    toDoneBtn.disabled = false;
+  }
+});
+
+// Back to the top of setup rather than to the daemons screen: the reason to
+// leave this page is to change what is tracked, and the screens chain
+// forward from there anyway.
+doneSetupBtn.addEventListener('click', () => {
+  doneStatus.textContent = '';
+  openStart();
+});
+
+// Where a page with nothing else to show lands: the first screen is the
+// identity question until it has an answer, and the picker from then on --
+// so nobody is asked twice for something already on the volume.
+function openStart() {
+  if (identity.address) {
+    openPicker();
+    return;
+  }
+  doneScreen.hidden = true;
+  pickScreen.hidden = true;
+  identityScreen.hidden = false;
+}
+
+(async () => {
+  // Both are wanted before the first screen is chosen, and neither depends
+  // on the other.
+  const [data, id] = await Promise.all([
+    fetch('/api/selection').then((res) => res.json()),
+    fetch('/api/identity').then((res) => res.json()).catch(() => null),
+  ]);
+  for (const name of data.selected) {
+    selected.set(name, {name: name});
+  }
+  renderPicked();
+  save.disabled = selected.size === 0;
+  if (id) {
+    identity = id.identity;
+    identityInput.value = identity.address;
+    // The saved selection already includes whatever this matched the first
+    // time through, so the matches are only described here, not re-applied
+    // -- a subsystem dropped on purpose stays dropped.
+    renderIdentityNote(id.matches, false);
+  }
+  // A reload during a run lands back on its progress, not on the picker.
+  const gen = await resumeGenStatus();
+  if (gen && gen.status !== 'idle') return;
+  // Nothing running, and this container has been set up before: open on
+  // what it serves. Only a genuinely fresh container starts at the top.
+  try {
+    const summary = await showDone();
+    if (!summary.configured) openStart();
+  } catch (err) {
+    // A summary that won't load is no reason to show nothing at all.
+    openStart();
+  }
+})();
+</script>
+</body>
+</html>

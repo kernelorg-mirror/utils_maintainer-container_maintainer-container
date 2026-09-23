@@ -1,0 +1,17 @@
+scan-path=/data/grokmirror/repos
+remove-suffix=1
+enable-index-links=1
+enable-follow-links=1
+enable-log-filecount=1
+enable-log-linecount=1
+readme=:README.md
+root-title=maintainer-container
+
+# cgit's built-in defaults for these are root-relative literals
+# (/cgit.css etc.), not derived from the request's SCRIPT_NAME -- have to
+# repoint them at the /cgit mount router.psgi puts this behind, or the
+# generated pages 404 fetching their own assets.
+css=/cgit/cgit.css
+logo=/cgit/cgit.png
+favicon=/cgit/favicon.ico
+js=/cgit/cgit.js

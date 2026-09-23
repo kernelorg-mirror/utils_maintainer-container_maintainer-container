@@ -1,0 +1,100 @@
+# This repo builds a container image; it is not a Python package and is
+# never installed from here. This file exists so the Python that ships
+# inside the image -- the setup dashboard and the MCP server -- has
+# somewhere to declare how it is linted and tested, and so `uv run pytest'
+# works in a checkout without anybody hand-assembling an environment.
+#
+# liblore and korgalore come from git rather than PyPI for the same reason
+# sync-venv.sh does it that way: liblore is pre-1.0 and moving as part of
+# this same effort, so a checkout should test against what the container
+# would actually install, not against the last release.
+#
+# grokmirror is only here for tests/test_preload.py, which runs
+# preload-objstore.sh for real, and that calls into grokmirror to set up
+# the object store. The image gets it from the copr, which builds master.
+[project]
+name = "maintainer-container"
+version = "0"
+requires-python = ">=3.12"
+
+[dependency-groups]
+dev = [
+    "grokmirror",
+    "korgalore",
+    "liblore",
+    "mcp",
+    "mypy",
+    "pyright",
+    "pytest",
+    "ruff",
+    "ty",
+]
+
+[tool.uv.sources]
+grokmirror = { git = "https://git.kernel.org/pub/scm/utils/grokmirror/grokmirror.git" }
+korgalore = { git = "https://git.kernel.org/pub/scm/utils/korgalore/korgalore.git" }
+liblore = { git = "https://git.kernel.org/pub/scm/utils/liblore/liblore.git" }
+
+[tool.pytest.ini_options]
+# The container runs these files directly, not as an installed package,
+# so tests import them the same way: by path, not through site-packages.
+pythonpath = ["mcpd", "setup"]
+testpaths = ["tests"]
+
+[tool.ruff]
+# Matches korgalore's settings so the Python in here reads the same as the
+# Python it imports.
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B904", "DTZ", "G", "I", "RET505", "RUF100", "SIM118"]
+
+[tool.ruff.lint.isort]
+# These are imported by filename because the container runs them by path,
+# not as an installed package -- without this they read as third-party.
+known-first-party = ["archive", "app", "server", "subsystems"]
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.mypy]
+# mcpd/ and setup/ are run by path inside the container, so their files are
+# top-level modules, not a package. mypy_path lets the checker resolve
+# "import archive" the same way the container's sys.path does.
+mypy_path = ["mcpd", "setup"]
+strict = true
+warn_unreachable = true
+python_version = "3.12"
+
+[tool.pyright]
+# pyright ignores virtualenvs on its own, but once exclude is set we are on
+# our own: https://github.com/microsoft/pyright/issues/9057#issuecomment-2366938099
+exclude = [".venv*"]
+extraPaths = ["mcpd", "setup"]
+typeCheckingMode = "strict"
+
+# Overly strict rules, matching korgalore's settings.
+reportConstantRedefinition = false
+reportUnknownArgumentType = false
+reportUnknownLambdaType = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+
+# False positives caused by underscore-prefixed functions used across files.
+reportPrivateUsage = false
+reportUnusedFunction = false
+
+[tool.ty.environment]
+extra-paths = ["mcpd", "setup"]
+
+[tool.ty.rules]
+all = "error"
+# Adopting it would require a typing_extensions dependency for the 3.11
+# fallback; the container is 3.12+, but korgalore ignores this rule and these
+# two codebases are meant to read the same.
+missing-override-decorator = "ignore"
+# Three type checkers disagree about which third-party modules carry usable
+# type information, so whether a suppression is unused is not a question one
+# checker out of three can answer on its own.
+unused-type-ignore-comment = "ignore"
