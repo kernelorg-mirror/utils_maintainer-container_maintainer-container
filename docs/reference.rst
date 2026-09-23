@@ -54,3 +54,8 @@ Updating
 --------
 korgalore and liblore update themselves every day. For everything else,
 rebuild the image from your git checkout. See :doc:`updating`.
+
+Source code
+-----------
+The source code is at
+https://git.kernel.org/pub/scm/utils/maintainer-container/maintainer-container.git.

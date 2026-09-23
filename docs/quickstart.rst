@@ -3,9 +3,17 @@ Quick start
 You need podman. The first start downloads git trees and mail, so it
 takes a while, and the container needs disk space for your subsystems.
 
-Build and run
--------------
-In a checkout of this repository::
+.. _build:
+
+Get it and build it
+-------------------
+There are no ready-made images yet, so you build the image yourself.
+Get the code::
+
+    git clone https://git.kernel.org/pub/scm/utils/maintainer-container/maintainer-container.git
+    cd maintainer-container
+
+Build the image and start the container::
 
     podman build -t maintainer-container .
     podman run -d --name maint -p 127.0.0.1:11043:11043 \
@@ -34,8 +42,8 @@ Replace ``~/linux`` with the path to your clone. The clone is mounted
 read-only, and it is not changed.
 
 Only commits that kernel.org also has are copied, with their history,
-so your own branches stay on your machine. This takes a few minutes. After that,
-the mirror downloads only what your clone doesn't have, for any kernel
+so your own branches stay on your machine. This takes a few minutes.
+After that, the mirror downloads only what your clone doesn't have, for any kernel
 tree you choose.
 
 Choose your subsystems

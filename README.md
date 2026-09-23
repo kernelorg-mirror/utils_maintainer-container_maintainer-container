@@ -58,6 +58,8 @@ instead of a plain reverse proxy in front of separate services:
 ## Build
 
 ```shell
+git clone https://git.kernel.org/pub/scm/utils/maintainer-container/maintainer-container.git
+cd maintainer-container
 podman build -t maintainer-container .
 ```
 

@@ -1,7 +1,7 @@
 Updating
 ========
 There are no ready-made images yet, so you update the container from
-your git checkout. Your data is in the ``maint`` volume, and an update
+your git checkout (see :ref:`build`). Your data is in the ``maint`` volume, and an update
 never touches it.
 
 .. note::

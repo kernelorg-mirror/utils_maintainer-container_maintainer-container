@@ -4,8 +4,11 @@ Use this for a VM or a spare box that you reach over ssh.
 
 Run it as a service
 -------------------
-The ``systemd/`` directory has a podman quadlet. It runs the container as
-a systemd user service, called ``maint``::
+On that machine, do the ``git clone`` and ``podman build`` steps from
+:ref:`build`, but not ``podman run``: the service below starts the
+container instead. Then, in the ``maintainer-container`` directory, the
+``systemd/`` directory has a podman quadlet. It runs the container as a
+systemd user service, called ``maint``::
 
     loginctl enable-linger $USER
     podman volume create maint

@@ -25,6 +25,9 @@ IMAP or NNTP.
    updating
    reference
 
+The source code is at
+https://git.kernel.org/pub/scm/utils/maintainer-container/maintainer-container.git.
+
 Getting help
 ------------
 To report a problem or suggest a feature, please send plaintext email to
