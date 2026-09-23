@@ -2,9 +2,11 @@
 
 A podman image that gets a new kernel subsystem maintainer running
 korgalore, public-inbox, grokmirror, and cgit locally, self-updating, with
-minimal setup. The guide for maintainers using it is in `docs/`; this
-README is about how it works and how to work on it. The reasons behind
-the less obvious choices are in comments next to the code they explain.
+minimal setup. Its short name, LLORE, stands for "local lore", and its
+port, `11043`, spells it. The guide for maintainers using it is in
+`docs/`; this README is about how it works and how to work on it. The
+reasons behind the less obvious choices are in comments next to the code
+they explain.
 
 ## Status
 

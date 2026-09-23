@@ -4,7 +4,8 @@ A podman container that gives a kernel subsystem maintainer a local copy
 of their part of lore.kernel.org and git.kernel.org. It keeps itself up
 to date, and you set it up once in a browser.
 
-Everything is on one port, ``11043``:
+Its short name, LLORE, stands for "local lore". Everything is on one
+port, ``11043``, which spells LLORE too:
 
 ================================  ==========================================
 ``http://127.0.0.1:11043/``       The dashboard: choose what to track.
