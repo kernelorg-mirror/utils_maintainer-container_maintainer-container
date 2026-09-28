@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 """MCP server over the container's local mail archive.
 
 Read-only, by construction: every tool here is a question, none of them

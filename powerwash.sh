@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 # Start over: empty the data volume, so the next start is a first start.
 # The dashboard asks for an email address again, and every tree and
 # archive is fetched again.

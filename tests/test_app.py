@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 """Tests for the setup dashboard's coderepo wiring.
 
 A `coderepo' link is what lets public-inbox reconstruct a blob out of an

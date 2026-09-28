@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 """Tests for the MCP server's tools.
 
 The retrieval layer has its own tests; these are about what the tools do

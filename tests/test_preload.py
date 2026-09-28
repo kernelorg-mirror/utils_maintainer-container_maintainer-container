@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 """Tests for seeding grokmirror's object store from a maintainer's own clone.
 
 Two halves: preload-objstore.sh, which builds an object store out of a

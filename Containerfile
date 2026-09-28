@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 # One image with everything a maintainer's local lore needs: public-inbox
 # and lei for mail, grokmirror and cgit for git trees, and korgalore (from
 # the venv on /data) to tie them to the maintainer's MAINTAINERS entries.

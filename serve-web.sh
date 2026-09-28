@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 # The one externally-published web port: public-inbox-netd loads
 # router.psgi instead of defaulting to bare PublicInbox::WWW, so one
 # daemon fronts the dashboard, cgit, git smart/dumb-HTTP clones, and the

@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 # Sync /data/venv on every start, start the daily resync loop, then run
 # the container's real command as a child and supervise it. This is what
 # makes

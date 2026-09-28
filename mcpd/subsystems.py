@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 """The subsystems this container tracks, and the archives korgalore built for them.
 
 korgalore does not deliver a tracked subsystem's mail into one big pile.

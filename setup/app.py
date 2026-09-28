@@ -1,4 +1,6 @@
 #!/data/venv/bin/python
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 """Initial setup web app for the maintainer container.
 
 First run of the container drops the maintainer here: pick the subsystems

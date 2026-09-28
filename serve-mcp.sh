@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 # The MCP server, on its own internal port with router.psgi in front of it
 # (see mcpd/server.py for why the transport is HTTP and not stdio).
 #

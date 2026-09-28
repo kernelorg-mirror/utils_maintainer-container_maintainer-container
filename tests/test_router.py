@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 """End-to-end tests for router.psgi, driven through a real public-inbox-netd.
 
 router.psgi is Perl and the rest of this suite is Python, which is how a

@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 # Keeps the mail feeds current. That is `kgl pull' rather than lei's own
 # `lei up --all' -- korgalore already wraps the feed refresh and delivers to
 # whatever target is configured. Only takes effect once the dashboard has

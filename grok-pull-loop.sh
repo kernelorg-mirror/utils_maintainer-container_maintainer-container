@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 # The one owner of the grok-pull process.
 #
 # Nothing else may start grok-pull against this toplevel. It is tempting

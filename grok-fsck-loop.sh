@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 # grok-fsck has no continuous mode of its own -- production runs it off a
 # weekly systemd timer and lets [fsck] frequency (days) spread the actual
 # connectivity/repack work across repos so each invocation is cheap. No

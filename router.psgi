@@ -1,4 +1,6 @@
 #!/usr/bin/perl
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 # Unified front door for the maintainer container: one process on the one
 # externally-published port, routing by path to the mail archive (/lore),
 # cgit (/cgit), git smart/dumb-HTTP clones at the root (mirroring upstream's

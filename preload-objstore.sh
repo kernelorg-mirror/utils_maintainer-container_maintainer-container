@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 # Build a grokmirror object store out of a clone the maintainer already has,
 # so the first mirror of a big tree does not have to download all of it.
 #

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 """Read-only retrieval over the container's local mail archive.
 
 Everything the MCP server answers comes from here, and this is the only

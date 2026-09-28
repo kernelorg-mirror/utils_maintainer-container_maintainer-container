@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 The Linux Foundation and contributors
 # Create (if missing) and sync /data/venv against the live korgalore and
 # liblore git repos. Idempotent -- safe to call on every container start
 # and from the daily resync in venv-sync-loop.sh.
