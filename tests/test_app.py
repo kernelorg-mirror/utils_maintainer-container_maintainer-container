@@ -1,18 +1,26 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 The Linux Foundation and contributors
-"""Tests for the setup dashboard's coderepo wiring.
+"""Tests for the setup dashboard (setup/app.py).
 
-A `coderepo' link is what lets public-inbox reconstruct a blob out of an
-emailed patch (PublicInbox::SolverGit), so these cover the two halves of
-that: picking which mirrored repositories an inbox should be anchored to,
-and writing the link out in a form git-config -- and therefore
-PublicInbox::Config -- reads back.
+Most of these cover the coderepo wiring. A `coderepo' link is what lets
+public-inbox reconstruct a blob out of an emailed patch
+(PublicInbox::SolverGit), so they cover the two halves of that: picking
+which mirrored repositories an inbox should be anchored to, and writing
+the link out in a form git-config -- and therefore PublicInbox::Config --
+reads back.
+
+The rest cover the public-inbox config the dashboard writes, the
+finished-setup screen, the argv `kgl track-subsystem' is run with, and
+how the dashboard answers HEAD.
 """
 
+import http.client
 import shutil
 import subprocess
+import threading
+from http.server import ThreadingHTTPServer
 from pathlib import Path
-from typing import List
+from typing import Iterator, List, Tuple
 
 import pytest
 from korgalore.maintainers import SubsystemEntry, Tree
@@ -461,3 +469,72 @@ class TestTrackSubsystemInvocation:
         assert cmd[1] == 'track-subsystem'
         assert cmd[2] == 'PAGE CACHE'
         assert cmd[cmd.index('--since') + 1] == '7.days.ago'
+
+
+class TestHead:
+    """HEAD gets GET's answer, without the body.
+
+    liblore sends `HEAD <origin>/<msgid>/' when a thread is not on the
+    mirror, and the router hands that path to the dashboard. Without a
+    do_HEAD the answer was a 501 and a line in the log on every miss.
+    These run a real server, because the bug that matters is on the wire:
+    a body after a HEAD answer is read as the start of the next response
+    on the same kept-alive connection.
+    """
+
+    @pytest.fixture
+    def conn(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[http.client.HTTPConnection]:
+        # What summary() reads, pointed somewhere empty, as in TestSummary.
+        monkeypatch.setattr(app, 'DATA_DIR', tmp_path)
+        monkeypatch.setattr(app, 'SELECTION_PATH', tmp_path / 'selected-subsystems.json')
+        monkeypatch.setattr(app, 'REPO_SELECTION_PATH', tmp_path / 'selected-repos.json')
+        monkeypatch.setattr(app, 'IDENTITY_PATH', tmp_path / 'identity.json')
+        monkeypatch.setattr(app, 'DAEMONS_PATH', tmp_path / 'enabled-daemons.json')
+        monkeypatch.setattr(app, 'PUBLICINBOX_CONFIG_PATH', tmp_path / 'publicinbox/config')
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), app.SetupHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        conn = http.client.HTTPConnection('127.0.0.1', server.server_address[1], timeout=10)
+        try:
+            yield conn
+        finally:
+            conn.close()
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+    @staticmethod
+    def ask(conn: http.client.HTTPConnection, method: str, path: str) -> Tuple[int, str, str, bytes]:
+        conn.request(method, path)
+        resp = conn.getresponse()
+        body = resp.read()
+        return resp.status, resp.getheader('Content-Type', ''), resp.getheader('Content-Length', ''), body
+
+    @pytest.mark.parametrize('path', ['/', '/api/summary'])
+    def test_head_answers_like_get(self, conn: http.client.HTTPConnection, path: str) -> None:
+        head = self.ask(conn, 'HEAD', path)
+        get = self.ask(conn, 'GET', path)
+
+        assert head[0] == get[0] == 200
+        assert head[1] == get[1]
+        # The length a GET would get, not 0.
+        assert head[2] == get[2] == str(len(get[3]))
+        assert head[3] == b''
+        assert get[3]
+
+    def test_the_liblore_miss_is_a_404_not_a_501(self, conn: http.client.HTTPConnection) -> None:
+        status, _, _, body = self.ask(conn, 'HEAD', '/20260101120000.1234-1-someone@example.org/')
+        assert status == 404
+        assert body == b''
+
+    def test_the_connection_survives_a_head(self, conn: http.client.HTTPConnection) -> None:
+        # Two HEADs and then a GET on one connection: if a HEAD answer
+        # carried a body, the GET would read it instead of its own answer.
+        self.ask(conn, 'HEAD', '/')
+        self.ask(conn, 'HEAD', '/api/summary')
+        status, content_type, _, body = self.ask(conn, 'GET', '/api/summary')
+
+        assert status == 200
+        assert content_type == 'application/json'
+        assert body.startswith(b'{')

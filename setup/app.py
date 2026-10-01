@@ -1987,12 +1987,26 @@ class SetupHandler(BaseHTTPRequestHandler):
     def send_json(self, payload: Dict[str, Any]) -> None:
         self.send_bytes(json.dumps(payload).encode(), 'application/json')
 
+    def do_HEAD(self) -> None:
+        # liblore asks `HEAD <origin>/<msgid>/' when a thread is not on the
+        # mirror, and that path has no /lore in it, so the router hands it
+        # here. Without this the base class answers 501, which shows up in
+        # the log as "Unsupported method ('HEAD')" every time b4 misses.
+        # The answer is GET's, without the body: send_bytes leaves it out,
+        # and send_error already does the same for HEAD.
+        self.do_GET()
+
     def send_bytes(self, body: bytes, content_type: str) -> None:
         self.send_response(200)
         self.send_header('Content-Type', content_type)
+        # The real length even for HEAD, so it says what a GET would get.
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        # A HEAD answer must not carry a body. On a kept-alive HTTP/1.1
+        # connection the client would read it as the start of the next
+        # response.
+        if self.command != 'HEAD':
+            self.wfile.write(body)
 
     def log_message(self, format: str, *args: Any) -> None:
         logger.info('%s %s', self.address_string(), format % args)
