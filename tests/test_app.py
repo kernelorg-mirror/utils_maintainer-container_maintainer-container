@@ -15,8 +15,11 @@ how the dashboard answers HEAD.
 """
 
 import http.client
+import json
+import os
 import shutil
 import subprocess
+import sys
 import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -426,6 +429,35 @@ class TestSummary:
         assert summary['mcp']['url'].startswith(app.ROUTER_PUBLIC_BASE)
 
 
+@pytest.fixture
+def argv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> List[List[str]]:
+    """Capture each command _run_generate launches, running none of them.
+
+    The fakes are gone again by the time a test runs, so a test can still
+    run the captured command for real.
+    """
+    calls: List[List[str]] = []
+
+    class FakeProc:
+        stdout = iter(())
+
+        def wait(self) -> int:
+            return 0
+
+    def fake_popen(cmd: List[str], **kwargs: object) -> FakeProc:
+        calls.append(cmd)
+        return FakeProc()
+
+    with monkeypatch.context() as m:
+        m.setattr(subprocess, 'Popen', fake_popen)
+        m.setattr(app, 'SUBSYSTEMS', {'PAGE CACHE': object()})
+        m.setattr(app, 'ensure_default_target', lambda: None)
+        m.setattr(app, 'write_publicinbox_config', lambda names: None)
+        m.setattr(app, 'DATA_DIR', tmp_path)
+        app._run_generate(['PAGE CACHE'], '7.days.ago')
+    return calls
+
+
 class TestTrackSubsystemInvocation:
     """The argv `kgl track-subsystem' is run with.
 
@@ -435,29 +467,6 @@ class TestTrackSubsystemInvocation:
     so the flag that pulls whole threads is part of the contract, not a
     tuning knob.
     """
-
-    @pytest.fixture
-    def argv(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> List[List[str]]:
-        """Capture each command _run_generate launches, running none of them."""
-        calls: List[List[str]] = []
-
-        class FakeProc:
-            stdout = iter(())
-
-            def wait(self) -> int:
-                return 0
-
-        def fake_popen(cmd: List[str], **kwargs: object) -> FakeProc:
-            calls.append(cmd)
-            return FakeProc()
-
-        monkeypatch.setattr(subprocess, 'Popen', fake_popen)
-        monkeypatch.setattr(app, 'SUBSYSTEMS', {'PAGE CACHE': object()})
-        monkeypatch.setattr(app, 'ensure_default_target', lambda: None)
-        monkeypatch.setattr(app, 'write_publicinbox_config', lambda names: None)
-        monkeypatch.setattr(app, 'DATA_DIR', tmp_path)
-        app._run_generate(['PAGE CACHE'], '7.days.ago')
-        return calls
 
     def test_whole_threads_are_pulled(self, argv: List[List[str]]) -> None:
         # Without this the archive holds orphan patches and b4 cannot
@@ -469,6 +478,97 @@ class TestTrackSubsystemInvocation:
         assert cmd[1] == 'track-subsystem'
         assert cmd[2] == 'PAGE CACHE'
         assert cmd[cmd.index('--since') + 1] == '7.days.ago'
+
+
+# A stand-in for lei, enough for `kgl track-subsystem' to finish: it logs
+# each command, gives every `lei q' an empty v2 archive to write into, and
+# lists those back for `lei ls-search'.
+FAKE_LEI = """\
+import json, os, subprocess, sys
+log = os.environ['FAKE_LEI_LOG']
+calls = json.load(open(log)) if os.path.exists(log) else []
+args = sys.argv[1:]
+if args[0] == 'ls-search':
+    print(json.dumps([{'output': c[c.index('-o') + 1]} for c in calls if c[0] == 'q']))
+    sys.exit(0)
+calls.append(args)
+json.dump(calls, open(log, 'w'))
+if args[0] == 'q':
+    out = args[args.index('-o') + 1][len('v2:'):]
+    subprocess.run(['git', 'init', '-q', '--bare', out + '/git/0.git'], check=True)
+"""
+
+# One of each kind of line korgalore builds a query from: L: for the list
+# query, and F:, X:, N: and K: for the patches query.
+PAGE_CACHE = """\
+PAGE CACHE
+M:\tA Maintainer <a@example.org>
+L:\tlinux-fsdevel@vger.kernel.org
+S:\tSupported
+F:\tmm/filemap.c
+F:\tinclude/linux/pagemap.h
+X:\tmm/filemap_test.c
+N:\tpagemap
+K:\tfolio_
+"""
+
+
+class TestEveryQueryPullsWholeThreads:
+    """`kgl track-subsystem', run for real with our argv, against a fake lei.
+
+    TestTrackSubsystemInvocation checks the flag is in our argv. This
+    checks it reaches every `lei q' korgalore builds from it, which is what
+    actually decides what lands in the archive -- and korgalore's own
+    default is --no-threads.
+
+    It matters for more than b4. The partial-mirror headers promise that
+    a thread the mirror has gets its new replies (lore-partial-mirrors.md,
+    section 3.2.1). The list query keeps that promise on its own, since
+    replies go to the list. The file queries only keep it with --threads:
+    a plain reply touches no files, so without it the patch would be here
+    and the review of it never would.
+    """
+
+    @pytest.fixture
+    def lei_calls(self, argv: List[List[str]], tmp_path: Path) -> List[List[str]]:
+        cmd = list(argv[0])
+        # The venv's own kgl, the one that ships with the korgalore this
+        # suite was installed with.
+        cmd[0] = str(Path(sys.executable).parent / 'kgl')
+        maintainers = tmp_path / 'MAINTAINERS'
+        maintainers.write_text(PAGE_CACHE, encoding='utf-8')
+        cmd[cmd.index('--maintainers') + 1] = str(maintainers)
+
+        bin_dir = tmp_path / 'bin'
+        bin_dir.mkdir()
+        (bin_dir / 'lei').write_text(f'#!{sys.executable}\n{FAKE_LEI}', encoding='utf-8')
+        (bin_dir / 'lei').chmod(0o755)
+        config = tmp_path / 'xdg' / 'config' / 'korgalore' / 'korgalore.toml'
+        config.parent.mkdir(parents=True)
+        config.write_text(f"[targets.{app.DEFAULT_TARGET}]\ntype = 'dummy'\n", encoding='utf-8')
+        log = tmp_path / 'lei.json'
+
+        env = {
+            **os.environ,
+            'PATH': f'{bin_dir}:{os.environ["PATH"]}',
+            'XDG_CONFIG_HOME': str(tmp_path / 'xdg' / 'config'),
+            'XDG_DATA_HOME': str(tmp_path / 'xdg' / 'data'),
+            'FAKE_LEI_LOG': str(log),
+        }
+        proc = subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
+        assert proc.returncode == 0, proc.stderr
+        return [call for call in json.loads(log.read_text(encoding='utf-8')) if call[0] == 'q']
+
+    def test_both_queries_are_made(self, lei_calls: List[List[str]]) -> None:
+        """So the next test isn't passing on an empty list."""
+        queries = [next(arg for arg in call if ' AND d:' in arg) for call in lei_calls]
+        assert len(queries) == 2
+        assert any(q.startswith('l:') for q in queries)
+        assert any('dfn:' in q and 'dfb:' in q for q in queries)
+
+    def test_every_query_has_threads(self, lei_calls: List[List[str]]) -> None:
+        for call in lei_calls:
+            assert '--threads' in call, call
 
 
 class TestHead:

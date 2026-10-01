@@ -715,6 +715,17 @@ def _run_generate(names: List[str], since: str) -> None:
             # It costs more: more messages fetched, a bigger archive. That
             # is the trade being made deliberately, not an oversight to
             # tidy up later.
+            #
+            # The partial-mirror headers depend on it too. Once the pull
+            # stamp is fresh, a client trusts this mirror to have every new
+            # reply to a thread it has (router.psgi, X-Archive-Coverage).
+            # The list query gets those on its own, since replies go to the
+            # list. The patches query matches files, and a plain reply
+            # touches none -- only --threads brings the review in after the
+            # patch. Dropping it would make clients miss replies without
+            # any sign. korgalore defaults to --no-threads, so this flag is
+            # the only thing that keeps the promise.
+            # (lore-partial-mirrors.md, section 3.2.1.)
             proc = subprocess.Popen(
                 [
                     KGL,
