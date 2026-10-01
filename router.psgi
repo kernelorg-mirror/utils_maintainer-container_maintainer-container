@@ -44,17 +44,23 @@ my ($pi_cfg, $www, $cgit, $pi_cfg_mtime);
 sub load_pi_config {
 	my $mtime = (stat($ENV{PI_CONFIG}))[9] // 0;
 	return if defined($pi_cfg_mtime) && $mtime == $pi_cfg_mtime;
-	$pi_cfg_mtime = $mtime;
 	# PublicInbox::Config->new caches by absolute path in its own
 	# $DEDUPE global with no mtime check of its own (daemon_loop sets
 	# $DEDUPE = {} for the life of the process) -- without evicting it
 	# here, ->new below would just hand back the same stale object our
 	# mtime check above just decided to replace.
 	%$PublicInbox::Config::DEDUPE = () if $PublicInbox::Config::DEDUPE;
-	$pi_cfg = PublicInbox::Config->new($ENV{PI_CONFIG});
-	$www = PublicInbox::WWW->new($pi_cfg);
-	$www->preload;
-	$cgit = PublicInbox::Cgit->new($pi_cfg);
+	my $cfg = PublicInbox::Config->new($ENV{PI_CONFIG});
+	my $new_www = PublicInbox::WWW->new($cfg);
+	$new_www->preload;
+	my $new_cgit = PublicInbox::Cgit->new($cfg);
+	# All or nothing, and the mtime last: when any of the above dies
+	# (a config git can't parse), nothing here has changed, and the
+	# next request tries the file again. Taking the mtime first would
+	# mark the broken file as loaded, and the old config would go on
+	# serving without a word.
+	($pi_cfg, $www, $cgit, $pi_cfg_mtime) =
+		($cfg, $new_www, $new_cgit, $mtime);
 }
 load_pi_config();
 

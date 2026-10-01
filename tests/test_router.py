@@ -295,8 +295,11 @@ def request(router: Tuple[str, int], raw: bytes) -> Tuple[int, Dict[str, str], b
             name, _, value = line.partition(':')
             headers[name.strip().lower()] = value.strip()
 
-        length = int(headers.get('content-length') or 0)
-        while len(body) < length:
+        # With neither a Content-Length nor chunking, the body runs to the
+        # end of the connection, so read until the server closes it.
+        length = headers.get('content-length')
+        to_eof = length is None and 'chunked' not in headers.get('transfer-encoding', '')
+        while to_eof or len(body) < int(length or 0):
             chunk = sock.recv(65536)
             if not chunk:
                 break
@@ -700,3 +703,63 @@ def test_a_junk_stamp_means_no_updated(lore: Lore, stamp: Path, junk: str) -> No
     _, headers = get(lore.addr, '/lore/nosuch/')
 
     assert headers['x-archive-coverage'] == 'partial'
+
+
+@pytest.fixture
+def own_lore(backend: _BackendServer, archive: Path, tmp_path: Path) -> Iterator[Lore]:
+    """A lore router with its own copy of the config, for tests that break it."""
+    pi_config = tmp_path / 'config'
+    shutil.copy(archive, pi_config)
+    with _netd(backend, tmp_path, pi_config) as addr:
+        # netd loads router.psgi on the first request, not at start. A
+        # config broken before then kills the load itself, outside the
+        # router's own handling, so let it load while the config is good.
+        assert get(addr, '/lore/test/')[0] == 200
+        yield Lore(addr, tmp_path / 'lore-updated')
+
+
+def rewrite_config(pi_config: Path, text: str) -> None:
+    """Change the config the router has loaded, so that it sees the change.
+
+    The router compares mtimes in whole seconds, and a test is quicker
+    than that, so the mtime is moved on by hand.
+    """
+    mtime = pi_config.stat().st_mtime
+    pi_config.write_text(text, encoding='utf-8')
+    os.utime(pi_config, (mtime + 10, mtime + 10))
+
+
+# git config can't parse this, so PublicInbox::Config->new dies on it.
+BROKEN = '[publicinbox "test\n'
+
+
+def test_a_die_under_lore_is_a_500_that_still_says_partial(own_lore: Lore, tmp_path: Path) -> None:
+    """Left to netd, the die would be a bare 500, and a client couldn't
+    tell it from a full archive's."""
+    rewrite_config(tmp_path / 'config', BROKEN)
+    host = f'{own_lore.addr[0]}:{own_lore.addr[1]}'
+
+    status, headers, body = request(
+        own_lore.addr, f'GET /lore/test/ HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n'.encode()
+    )
+
+    assert status == 500
+    assert body == b'Internal server error\n'
+    assert headers['x-archive-coverage'] == 'partial'
+    assert headers['x-archive-upstream'] == UPSTREAM
+
+
+def test_a_broken_config_is_tried_again_until_it_is_fixed(own_lore: Lore, tmp_path: Path) -> None:
+    """A config that failed to load is not taken as loaded. If it were,
+    the old config would quietly go on serving after the first 500, and
+    a fix with the same mtime would never be read."""
+    pi_config = tmp_path / 'config'
+    good = pi_config.read_text(encoding='utf-8')
+    rewrite_config(pi_config, BROKEN)
+
+    assert get(own_lore.addr, f'/lore/test/{MSGID}/raw')[0] == 500
+    assert get(own_lore.addr, f'/lore/test/{MSGID}/raw')[0] == 500
+
+    rewrite_config(pi_config, good)
+
+    assert get(own_lore.addr, f'/lore/test/{MSGID}/raw')[0] == 200
