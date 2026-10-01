@@ -413,11 +413,13 @@
     <code>b4.linkmask</code> back to the public default, in case it has
     been changed: it builds the <code>Link:</code> trailer that ends up in
     your commits, so it stays public.</p>
-    <p class="hint">The local archive only goes back as far as the window
-    you imported. When b4 can't find a message it reports it as missing
-    rather than asking lore.kernel.org, so keep
+    <p class="hint">The local archive only has the subsystems you chose,
+    and only goes back as far as the window you imported. When a thread is
+    not here, b4 fetches it from lore.kernel.org on its own. This needs
+    liblore 0.10 or newer on your machine. With an older liblore, b4
+    reports the thread as missing, so keep
     <code>git config --global --unset b4.midmask</code> in your back pocket
-    for older threads.</p>
+    for those.</p>
   </section>
 
   <section>

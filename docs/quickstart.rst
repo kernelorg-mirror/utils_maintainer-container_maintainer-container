@@ -68,8 +68,15 @@ Point b4 at the local archive::
 ``midmask`` is where b4 fetches threads from. ``linkmask`` builds the
 ``Link:`` trailers in your commits, so it stays public.
 
-The local archive only goes back as far as you imported. For an older
-thread, go back to lore.kernel.org::
+The local archive only has the subsystems you chose, and only goes back
+as far as you imported. It tells b4 so, and names lore.kernel.org as
+the place to ask for the rest. When a thread is not here, b4 fetches it
+from lore.kernel.org on its own. The local archive does not keep a copy:
+the next time you ask for that thread, b4 goes to lore.kernel.org again.
+
+This needs liblore 0.10 or newer on your machine (b4 uses it to talk to
+archives). With an older liblore, b4 reports the thread as missing. For
+that thread, go back to lore.kernel.org::
 
     git config --global --unset b4.midmask
 
