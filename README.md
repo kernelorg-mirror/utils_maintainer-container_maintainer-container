@@ -283,6 +283,38 @@ container, source the file first:
 set -a; . ./defaults.env; set +a
 ```
 
+The one entry that is a plain `=` default is `ARCHIVE_UPSTREAM`, so that
+`-e ARCHIVE_UPSTREAM=` can set it to empty -- see the next section.
+
+## A partial archive
+
+The archive under `/lore` only has the subsystems you track, so a 404 from
+it, or a search that finds nothing, doesn't mean the mail doesn't exist.
+Every `/lore` answer says so in two headers:
+
+```
+X-Archive-Coverage: partial; updated=1790000000
+X-Archive-Upstream: https://lore.kernel.org/all/
+```
+
+A client that knows them (liblore, and so b4) asks the upstream for what
+isn't here. `updated` is when the last good mail update started
+(`kgl-pull-loop.sh` writes it to `/data/lore-updated`). For a thread the
+archive has, the client can trust "nothing new since then" without asking
+upstream. The stamp only moves when `kgl pull --fail-on-feed-error`
+succeeded, the `all` index is current, and every served archive is one
+korgalore updates (`setup/lore_coverage.py`). Otherwise it stays where it
+was, and clients just ask upstream more often.
+
+Why headers, and not a router that asks lore.kernel.org itself? The router
+runs in a few blocking workers, and a few slow calls to lore would stall
+the archive, cgit, git clones and the dashboard all at once. The client
+already has its own failover, User-Agent and offline handling, and it
+knows where each answer came from.
+
+Set `ARCHIVE_UPSTREAM=` (empty) to send neither header, and look like a
+full archive again.
+
 ## Ports
 
 Everything this container listens on lives in the `11xxx` range, with the

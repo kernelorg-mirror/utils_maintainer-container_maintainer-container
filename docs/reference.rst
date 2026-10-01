@@ -31,7 +31,14 @@ Setting                   Default    What it does
 ``KGL_PULL_INTERVAL``     ``600``    Seconds between mail updates.
 ``VENV_SYNC_INTERVAL``    ``86400``  Seconds between korgalore/liblore updates.
 ``WEB_WORKERS``           ``4``      Web server worker processes.
+``ARCHIVE_UPSTREAM``      lore       Where to find the mail that isn't here.
 ========================  =========  ==========================================
+
+The archive only has the subsystems you track. So every answer under
+``/lore`` says that it is partial, and names ``ARCHIVE_UPSTREAM`` as the
+place that has the rest. b4 then gets a thread that isn't here from
+lore.kernel.org on its own. Set ``ARCHIVE_UPSTREAM=`` (empty) to turn this
+off.
 
 Where things live
 -----------------
@@ -44,7 +51,14 @@ Everything is in the ``/data`` volume. You can edit these files by hand:
 ==============================================  ===============================
 
 When you save one, the service that reads it picks up the change within a
-few seconds. You don't need to restart anything. To get a shell::
+few seconds. You don't need to restart anything.
+
+``/data/lore-updated`` is the time the last good mail update started. The
+archive sends it to b4, so b4 can trust "no new mail" from here. Don't edit
+it: the container only moves it when every subsystem updated without an
+error.
+
+To get a shell::
 
     podman exec -it maint bash
 

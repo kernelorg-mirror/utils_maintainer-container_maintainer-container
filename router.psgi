@@ -18,6 +18,7 @@ use strict;
 use warnings;
 use v5.12;
 use Plack::Builder;
+use Plack::Util;
 use HTTP::Tiny;
 # Monotonic, so a clock step mid-request cannot stretch or void a deadline.
 use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);
@@ -71,6 +72,57 @@ my $dashboard_host = env('DASHBOARD_HOST');
 my $dashboard_port = env('DASHBOARD_PORT');
 my $mcp_host = env('MCP_HOST');
 my $mcp_port = env('MCP_PORT');
+my $archive_upstream = env('ARCHIVE_UPSTREAM');
+my $pull_stamp_path = env('PULL_STAMP_PATH');
+
+# The archive only holds what the tracked subsystems pulled in, so a 404 or
+# an empty search from it doesn't mean the mail doesn't exist. Every /lore
+# response says so, and names the archive that has the rest, so that a
+# client (liblore) can ask there instead. The headers are the same for
+# every inbox: the inbox names here (spi-mailinglist, ...) are our own and
+# lore.kernel.org has no inbox by that name, so its `all' answers for each.
+#
+# `updated' is when the last good pull cycle started (kgl-pull-loop.sh
+# writes it), and it is what lets a client trust "nothing new" from here.
+# It is read on every request, but only re-read when the file changes:
+# the loop replaces it with a rename, so the inode tells a new one apart
+# even within the same second. No file, or junk in it, means no
+# `updated', which is always safe -- the client just asks upstream.
+my ($stamp_key, $stamp) = ('');
+sub pull_stamp {
+	my @st = stat($pull_stamp_path);
+	my $key = @st ? "$st[0]:$st[1]:$st[9]:$st[7]" : '';
+	return $stamp if $key eq $stamp_key;
+	$stamp_key = $key;
+	$stamp = undef;
+	if (@st && open(my $fh, '<', $pull_stamp_path)) {
+		# All of it, not a line: anything past the one number
+		# is junk too.
+		my $text = do { local $/; <$fh> } // '';
+		$stamp = $1 if $text =~ /\A([0-9]+)\n?\z/;
+	}
+	return $stamp;
+}
+
+sub archive_headers {
+	my ($res) = @_;
+	# ARCHIVE_UPSTREAM='' is the way back to a plain archive: no headers
+	# at all, and clients treat it as a full one, as they always have.
+	return $res if $archive_upstream eq '';
+	my $coverage = 'partial';
+	my $updated = pull_stamp();
+	$coverage .= "; updated=$updated" if defined $updated;
+	return Plack::Util::response_cb($res, sub {
+		my ($r) = @_;
+		# A copy, because WWW may hand back the same header list
+		# for more than one response.
+		my $h = $r->[1] = [ @{$r->[1]} ];
+		Plack::Util::header_set($h, 'X-Archive-Coverage', $coverage);
+		Plack::Util::header_set($h, 'X-Archive-Upstream',
+					$archive_upstream);
+		return;
+	});
+}
 
 # HTTP::Tiny's own default is 60s, and it applies to each read as much as to
 # the connect -- so a response that goes quiet for a minute is dropped as if
@@ -381,12 +433,24 @@ builder {
 			my $qs = $env->{QUERY_STRING};
 			my $loc = "$env->{SCRIPT_NAME}/" .
 				(length($qs // '') ? "?$qs" : '');
-			return [301, ['Location' => $loc,
+			return archive_headers([301, ['Location' => $loc,
 				'Content-Type' => 'text/plain'],
-				["Moved to $loc\n"]];
+				["Moved to $loc\n"]]);
 		}
-		load_pi_config();
-		return $www->call($env);
+		# The headers belong on errors too: a client that sees a bare
+		# 500 from here can't tell it from a full archive's 500. So a
+		# die is turned into a 500 of our own rather than left to netd.
+		my $res = eval {
+			load_pi_config();
+			$www->call($env);
+		};
+		unless ($res) {
+			my $err = $@ || "no response\n";
+			warn "lore: $env->{REQUEST_METHOD} $env->{REQUEST_URI}: $err";
+			$res = [500, ['Content-Type' => 'text/plain'],
+				["Internal server error\n"]];
+		}
+		return archive_headers($res);
 	};
 	# PublicInbox::Cgit->new returns undef until publicinbox.cgitrc is
 	# set -- true at boot before any subsystem has been tracked yet,

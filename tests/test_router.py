@@ -20,6 +20,7 @@ proxy that forwards an empty body still gets a 200 back; only comparing
 what arrived against what was sent catches it.
 """
 
+import contextlib
 import hashlib
 import http.server
 import json
@@ -30,11 +31,13 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Tuple
+from typing import Any, Dict, Generator, Iterator, List, NamedTuple, Tuple
 
 import pytest
 
 NETD = shutil.which('public-inbox-netd')
+# What the archive fixture builds a real inbox with.
+PI_TOOLS = ('public-inbox-init', 'public-inbox-mda')
 
 # router.psgi loads these itself, and netd answers 500 rather than failing
 # to start when one is absent -- which reads as a router bug instead of a
@@ -45,7 +48,9 @@ PERL_MODULES = ('Plack::Middleware::ReverseProxy',)
 
 
 def _missing() -> List[str]:
-    missing: List[str] = [] if NETD else ['public-inbox-netd (package: public-inbox)']
+    missing: List[str] = [
+        f'{tool} (package: public-inbox)' for tool in ('public-inbox-netd', *PI_TOOLS) if not shutil.which(tool)
+    ]
     for module in PERL_MODULES:
         if subprocess.run(['perl', f'-M{module}', '-e1'], capture_output=True).returncode:
             missing.append(module)
@@ -74,6 +79,9 @@ HOLD = 60
 # What the router fixture sets MCP_PROXY_DEADLINE to. Small, because the
 # trickle test has to outlive it and the suite should not.
 DEADLINE = 3
+# What the router fixtures set ARCHIVE_UPSTREAM to, unless a test is about
+# leaving it empty.
+UPSTREAM = 'https://lore.kernel.org/all/'
 
 
 class _BackendServer(http.server.ThreadingHTTPServer):
@@ -198,8 +206,10 @@ def backend() -> Iterator[_BackendServer]:
     server.server_close()
 
 
-@pytest.fixture(scope='module')
-def router(backend: _BackendServer, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Tuple[str, int]]:
+@contextlib.contextmanager
+def _netd(
+    backend: _BackendServer, tmp: Path, pi_config: Path, **settings: str
+) -> Generator[Tuple[str, int], None, None]:
     """A real public-inbox-netd serving router.psgi, proxying to the stub.
 
     -W0 on purpose: one process makes a blocked worker impossible to
@@ -209,8 +219,6 @@ def router(backend: _BackendServer, tmp_path_factory: pytest.TempPathFactory) ->
     """
     host, port = str(backend.server_address[0]), str(backend.server_address[1])
     listen = _free_port()
-    tmp = tmp_path_factory.mktemp('router')
-    pi_config = tmp / 'pi_config'  # deliberately absent: /lore 404s, / still works
 
     env = dict(os.environ)
     env.update(
@@ -222,6 +230,9 @@ def router(backend: _BackendServer, tmp_path_factory: pytest.TempPathFactory) ->
             'MCP_HOST': host,
             'MCP_PORT': port,
             'MCP_PROXY_DEADLINE': str(DEADLINE),
+            'ARCHIVE_UPSTREAM': UPSTREAM,
+            'PULL_STAMP_PATH': str(tmp / 'lore-updated'),
+            **settings,
         }
     )
     assert NETD  # the module-level skip already covers its absence
@@ -245,10 +256,19 @@ def router(backend: _BackendServer, tmp_path_factory: pytest.TempPathFactory) ->
         proc.kill()
         pytest.fail('netd never started listening')
 
-    yield ('127.0.0.1', listen)
+    try:
+        yield ('127.0.0.1', listen)
+    finally:
+        proc.kill()
+        proc.wait(timeout=10)
 
-    proc.kill()
-    proc.wait(timeout=10)
+
+@pytest.fixture(scope='module')
+def router(backend: _BackendServer, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Tuple[str, int]]:
+    tmp = tmp_path_factory.mktemp('router')
+    pi_config = tmp / 'pi_config'  # deliberately absent: /lore 404s, / still works
+    with _netd(backend, tmp, pi_config) as router:
+        yield router
 
 
 def request(router: Tuple[str, int], raw: bytes) -> Tuple[int, Dict[str, str], bytes]:
@@ -491,3 +511,192 @@ def test_an_ordinary_mcp_request_is_not_cut_short(router: Tuple[str, int]) -> No
     status, _, body = request(router, chunked_post('/mcp', PAYLOAD, host))
     assert status == 200
     assert json.loads(body)['sha256'] == hashlib.sha256(PAYLOAD).hexdigest()
+
+
+# Saying the archive is partial
+#
+# The archive only has the tracked subsystems, so every /lore answer says
+# so and names where the rest is (X-Archive-Coverage, X-Archive-Upstream).
+# A client that gets a 404 here then knows to ask upstream instead of
+# reporting the thread as missing.
+
+MSGID = 'm1@example.org'
+MESSAGE = f"""\
+From: A Maintainer <a@example.org>
+To: test@example.org
+Subject: a thread the mirror has
+Message-ID: <{MSGID}>
+Date: Thu, 01 Oct 2026 00:00:00 +0000
+
+body
+"""
+
+
+class Lore(NamedTuple):
+    addr: Tuple[str, int]
+    stamp: Path
+
+
+@pytest.fixture(scope='module')
+def archive(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A public-inbox config with one real inbox, holding one message.
+
+    Real rather than stubbed, because the headers have to reach responses
+    PublicInbox::WWW builds itself, streamed ones included, and only WWW
+    knows how it builds them.
+    """
+    tmp = tmp_path_factory.mktemp('archive')
+    pi_config = tmp / 'config'
+    env = {**os.environ, 'PI_CONFIG': str(pi_config)}
+    subprocess.run(
+        ['public-inbox-init', '-V2', 'test', str(tmp / 'test'), 'http://example.org/test', 'test@example.org'],
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ['public-inbox-mda', '--no-precheck'],
+        env={**env, 'ORIGINAL_RECIPIENT': 'test@example.org'},
+        input=MESSAGE.encode(),
+        check=True,
+        capture_output=True,
+    )
+    return pi_config
+
+
+@pytest.fixture(scope='module')
+def lore(backend: _BackendServer, archive: Path, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lore]:
+    tmp = tmp_path_factory.mktemp('lore')
+    with _netd(backend, tmp, archive) as addr:
+        yield Lore(addr, tmp / 'lore-updated')
+
+
+@pytest.fixture
+def stamp(lore: Lore) -> Iterator[Path]:
+    """The pull stamp the lore router reads, gone again after the test."""
+    yield lore.stamp
+    lore.stamp.unlink(missing_ok=True)
+
+
+def write_stamp(path: Path, text: str) -> None:
+    """Replace the stamp the way kgl-pull-loop.sh does, by a rename."""
+    new = path.with_name(path.name + '.new')
+    new.write_text(text, encoding='utf-8')
+    new.replace(path)
+
+
+def get(router: Tuple[str, int], path: str, method: str = 'GET') -> Tuple[int, Dict[str, str]]:
+    host = f'{router[0]}:{router[1]}'
+    status, headers, _ = request(
+        router, f'{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n'.encode()
+    )
+    return status, headers
+
+
+@pytest.mark.parametrize(
+    'path, expected',
+    [
+        pytest.param('/lore', 301, id='bare-lore-redirect'),
+        pytest.param('/lore/test/', 200, id='inbox-index'),
+        # Both of these are streamed, a code-ref response rather than a
+        # finished one, which is where a header wrapper usually goes wrong.
+        pytest.param(f'/lore/test/{MSGID}/raw', 200, id='raw-message'),
+        pytest.param(f'/lore/test/{MSGID}/t.mbox.gz', 200, id='thread-mbox'),
+        # The one that matters most: "not here" has to say "but maybe there".
+        pytest.param('/lore/nosuch/', 404, id='not-found'),
+    ],
+)
+def test_every_lore_answer_says_the_archive_is_partial(lore: Lore, path: str, expected: int) -> None:
+    status, headers = get(lore.addr, path)
+
+    assert status == expected
+    assert headers['x-archive-coverage'] == 'partial'
+    assert headers['x-archive-upstream'] == UPSTREAM
+
+
+def test_a_head_on_lore_has_the_headers_too(lore: Lore) -> None:
+    """liblore asks with HEAD when it only wants to know if a thread is here."""
+    status, headers = get(lore.addr, f'/lore/test/{MSGID}/raw', 'HEAD')
+
+    assert status == 200
+    assert headers['x-archive-coverage'] == 'partial'
+
+
+@pytest.mark.parametrize(
+    'method, path',
+    [
+        pytest.param('GET', '/cgit/', id='cgit'),
+        pytest.param('GET', '/', id='dashboard'),
+        pytest.param('GET', '/api/summary', id='dashboard-api'),
+        pytest.param('DELETE', '/mcp', id='mcp'),
+    ],
+)
+def test_nothing_outside_lore_says_it(lore: Lore, method: str, path: str) -> None:
+    """The dashboard, cgit and MCP aren't mail archives. A client that
+    took the headers from them would learn an upstream for the wrong
+    thing."""
+    _, headers = get(lore.addr, path, method)
+
+    assert 'x-archive-coverage' not in headers
+    assert 'x-archive-upstream' not in headers
+
+
+def test_an_empty_upstream_sends_neither_header(backend: _BackendServer, archive: Path, tmp_path: Path) -> None:
+    """ARCHIVE_UPSTREAM='' is the way back to looking like a full archive."""
+    write_stamp(tmp_path / 'lore-updated', '1790000000\n')
+    with _netd(backend, tmp_path, archive, ARCHIVE_UPSTREAM='') as addr:
+        for path in ('/lore', '/lore/test/', '/lore/nosuch/'):
+            _, headers = get(addr, path)
+
+            assert 'x-archive-coverage' not in headers, path
+            assert 'x-archive-upstream' not in headers, path
+
+
+def test_the_pull_stamp_is_sent_as_updated(lore: Lore, stamp: Path) -> None:
+    write_stamp(stamp, '1790000000\n')
+
+    _, headers = get(lore.addr, '/lore/nosuch/')
+
+    assert headers['x-archive-coverage'] == 'partial; updated=1790000000'
+
+
+def test_a_new_stamp_is_seen_at_once(lore: Lore, stamp: Path) -> None:
+    """The router caches the stamp, and the two writes here land in the
+    same second -- so an mtime alone can't tell them apart."""
+    write_stamp(stamp, '1790000000\n')
+    get(lore.addr, '/lore/nosuch/')
+    write_stamp(stamp, '1790000600\n')
+
+    _, headers = get(lore.addr, '/lore/nosuch/')
+
+    assert headers['x-archive-coverage'] == 'partial; updated=1790000600'
+
+
+def test_no_stamp_means_no_updated(lore: Lore, stamp: Path) -> None:
+    """No good pull yet. Leaving `updated' out is safe: the client asks
+    upstream."""
+    write_stamp(stamp, '1790000000\n')
+    get(lore.addr, '/lore/nosuch/')
+    stamp.unlink()
+
+    _, headers = get(lore.addr, '/lore/nosuch/')
+
+    assert headers['x-archive-coverage'] == 'partial'
+
+
+@pytest.mark.parametrize(
+    'junk',
+    [
+        pytest.param('', id='empty'),
+        pytest.param('soon\n', id='a-word'),
+        pytest.param('1790000000abc\n', id='trailing-junk'),
+        pytest.param('-1790000000\n', id='negative'),
+        pytest.param('1790000000\n1790000600\n', id='two-lines'),
+    ],
+)
+def test_a_junk_stamp_means_no_updated(lore: Lore, stamp: Path, junk: str) -> None:
+    write_stamp(stamp, junk)
+
+    _, headers = get(lore.addr, '/lore/nosuch/')
+
+    assert headers['x-archive-coverage'] == 'partial'
