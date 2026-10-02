@@ -23,7 +23,7 @@ import sys
 import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from typing import Iterator, List, Tuple
+from typing import Iterator, List, NamedTuple, Optional, Tuple
 
 import pytest
 from korgalore.maintainers import SubsystemEntry, Tree
@@ -489,9 +489,9 @@ log = os.environ['FAKE_LEI_LOG']
 calls = json.load(open(log)) if os.path.exists(log) else []
 args = sys.argv[1:]
 if args[0] == 'ls-search':
-    print(json.dumps([{'output': c[c.index('-o') + 1]} for c in calls if c[0] == 'q']))
+    print(json.dumps([{'output': a[a.index('-o') + 1]} for a in (c['argv'] for c in calls) if a[0] == 'q']))
     sys.exit(0)
-calls.append(args)
+calls.append({'argv': args, 'stdin': sys.stdin.read() if '--stdin' in args else None})
 json.dump(calls, open(log, 'w'))
 if args[0] == 'q':
     out = args[args.index('-o') + 1][len('v2:'):]
@@ -513,6 +513,21 @@ K:\tfolio_
 """
 
 
+class LeiCall(NamedTuple):
+    """One `lei q' as the fake lei saw it."""
+
+    argv: List[str]
+    stdin: Optional[str]
+
+    @property
+    def query(self) -> str:
+        """The search, wherever korgalore put it: on stdin for `--stdin',
+        else the argument that holds the date range."""
+        if self.stdin is not None:
+            return self.stdin.strip()
+        return next(arg for arg in self.argv if ' AND d:' in arg)
+
+
 class TestEveryQueryPullsWholeThreads:
     """`kgl track-subsystem', run for real with our argv, against a fake lei.
 
@@ -530,7 +545,7 @@ class TestEveryQueryPullsWholeThreads:
     """
 
     @pytest.fixture
-    def lei_calls(self, argv: List[List[str]], tmp_path: Path) -> List[List[str]]:
+    def lei_calls(self, argv: List[List[str]], tmp_path: Path) -> List[LeiCall]:
         cmd = list(argv[0])
         # The venv's own kgl, the one that ships with the korgalore this
         # suite was installed with.
@@ -557,18 +572,28 @@ class TestEveryQueryPullsWholeThreads:
         }
         proc = subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
         assert proc.returncode == 0, proc.stderr
-        return [call for call in json.loads(log.read_text(encoding='utf-8')) if call[0] == 'q']
+        calls = [LeiCall(**call) for call in json.loads(log.read_text(encoding='utf-8'))]
+        return [call for call in calls if call.argv[0] == 'q']
 
-    def test_both_queries_are_made(self, lei_calls: List[List[str]]) -> None:
-        """So the next test isn't passing on an empty list."""
-        queries = [next(arg for arg in call if ' AND d:' in arg) for call in lei_calls]
+    def test_both_queries_are_made(self, lei_calls: List[LeiCall]) -> None:
+        """So the tests below aren't passing on an empty list."""
+        queries = [call.query for call in lei_calls]
         assert len(queries) == 2
         assert any(q.startswith('l:') for q in queries)
         assert any('dfn:' in q and 'dfb:' in q for q in queries)
 
-    def test_every_query_has_threads(self, lei_calls: List[List[str]]) -> None:
+    def test_every_query_has_threads(self, lei_calls: List[LeiCall]) -> None:
         for call in lei_calls:
-            assert '--threads' in call, call
+            assert '--threads' in call.argv, call
+
+    def test_no_query_reaches_lei_as_a_phrase(self, lei_calls: List[LeiCall]) -> None:
+        """lei searches any argument with whitespace in it as one phrase.
+        So `l:list AND d:...' passed as one argument matched nothing, and
+        lei still exited 0: the archive was set up, but it was empty. A
+        whole query has to go on stdin (`--stdin'), or else be split so
+        that each argument is one term."""
+        for call in lei_calls:
+            assert not any(any(c.isspace() for c in arg) for arg in call.argv), call
 
 
 class TestHead:
