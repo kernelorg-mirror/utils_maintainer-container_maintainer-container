@@ -46,3 +46,7 @@ os.environ.setdefault('GROKMIRROR_CONF_PATH', '/nonexistent/data/grokmirror/grok
 os.environ.setdefault('GROKMIRROR_MANIFEST_PATH', '/nonexistent/data/grokmirror/manifest.js.gz')
 os.environ.setdefault('GROKMIRROR_PID_PATH', '/nonexistent/data/grokmirror/grok-pull.pid')
 os.environ.setdefault('GROKMIRROR_LOG_PATH', '/nonexistent/data/grokmirror/grok-pull.log')
+os.environ.setdefault('GROKMIRROR_SOCKET_PATH', '/nonexistent/data/grokmirror/grok-pull.socket')
+os.environ.setdefault('SYNC_REQUEST_PATH', '/nonexistent/data/sync-requested')
+os.environ.setdefault('KGL_PULL_STATE_PATH', '/nonexistent/data/kgl-pull-state')
+os.environ.setdefault('PULL_STAMP_PATH', '/nonexistent/data/lore-updated')

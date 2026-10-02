@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 The Linux Foundation and contributors
-"""Tests for the pull stamp: kgl-pull-loop.sh and lore_coverage.py.
+"""Tests for the pull stamp, kgl-pull-loop.sh and lore_coverage.py, and
+for how the loop answers the dashboard's "Sync now".
 
 The stamp is what router.psgi sends as `updated=' in X-Archive-Coverage,
 and a client that sees it trusts the mirror's "nothing new" without asking
@@ -44,6 +45,8 @@ class Volume:
         self.extindex_stamp = root / 'publicinbox' / '.extindex-stamp'
         self.bin = root / 'bin'
         self.log = root / 'calls.log'
+        self.state = root / 'kgl-pull-state'
+        self.sync_request = root / 'sync-requested'
 
         self.conf_d.mkdir(parents=True)
         self.pi_config.parent.mkdir(parents=True)
@@ -76,6 +79,16 @@ class Volume:
 
     def calls(self) -> List[str]:
         return self.log.read_text(encoding='utf-8').splitlines() if self.log.exists() else []
+
+    def pull_state(self) -> Dict[str, int]:
+        """KGL_PULL_STATE_PATH, read the way the dashboard reads it."""
+        lines = self.state.read_text(encoding='utf-8').splitlines()
+        return {key: int(value) for key, _, value in (line.partition('=') for line in lines)}
+
+    def request_sync(self, at: float) -> None:
+        """What the dashboard's "Sync now" does, dated `at'."""
+        self.sync_request.touch()
+        os.utime(self.sync_request, (at, at))
 
 
 @pytest.fixture
@@ -186,7 +199,14 @@ def pull_once(volume: Volume, kgl: int = 0, extindex: int = 0, kgl_sleep: float 
         (volume.bin / tool).chmod(0o755)
     (volume.root / 'venv' / 'bin' / 'python').chmod(0o755)
 
-    env = {
+    return subprocess.run(
+        [str(LOOP), '--once'], env=loop_env(volume), capture_output=True, text=True, check=False
+    ).returncode
+
+
+def loop_env(volume: Volume, interval: int = 600) -> Dict[str, str]:
+    """The environment the loop runs in, every path pointed into volume."""
+    return {
         'PATH': f'{volume.bin}:{os.environ["PATH"]}',
         'DEFAULTS_ENV': str(REPO / 'defaults.env'),
         'DATA_DIR': str(volume.root),
@@ -201,8 +221,11 @@ def pull_once(volume: Volume, kgl: int = 0, extindex: int = 0, kgl_sleep: float 
         'EXTINDEX_STAMP_PATH': str(volume.extindex_stamp),
         'PULL_STAMP_PATH': str(volume.stamp),
         'LORE_COVERAGE_SCRIPT': str(REPO / 'setup' / 'lore_coverage.py'),
+        'KGL_PULL_STATE_PATH': str(volume.state),
+        'SYNC_REQUEST_PATH': str(volume.sync_request),
+        'KGL_PULL_INTERVAL': str(interval),
+        'SYNC_POLL_INTERVAL': '1',
     }
-    return subprocess.run([str(LOOP), '--once'], env=env, capture_output=True, text=True, check=False).returncode
 
 
 def stale(volume: Volume) -> None:
@@ -294,3 +317,91 @@ def test_nothing_tracked_writes_no_stamp(volume: Volume) -> None:
     assert pull_once(volume) != 0
     assert not volume.stamp.exists()
     assert not any(call.startswith('kgl') for call in volume.calls())
+
+
+# Sync now
+
+
+def test_a_pass_says_when_it_ran_and_how_it_went(volume: Volume) -> None:
+    """The dashboard reads this to know the pass it asked for is done."""
+    before = int(time.time())
+    assert pull_once(volume) == 0
+    after = int(time.time())
+
+    state = volume.pull_state()
+    assert before <= state['started'] <= state['finished'] <= after
+    assert state['ok'] == 1
+    assert not volume.state.with_name('kgl-pull-state.new').exists()
+
+
+def test_a_failed_pass_says_so(volume: Volume) -> None:
+    assert pull_once(volume, kgl=1) != 0
+
+    assert volume.pull_state()['ok'] == 0
+    assert 'finished' in volume.pull_state()
+
+
+def test_a_running_pass_has_not_finished(volume: Volume) -> None:
+    """While kgl runs, the state has a start and nothing else, so the
+    dashboard shows the pass as under way."""
+    seen = volume.root / 'state-during-pull'
+
+    pull_once(volume, kgl_does=f'cp {volume.state} {seen}')
+
+    assert seen.read_text(encoding='utf-8').splitlines() == [f'started={volume.pull_state()["started"]}']
+
+
+def wait_after_pass(volume: Volume, started: int, interval: int) -> 'subprocess.Popen[str]':
+    """Start the loop's wait after a pass that began at `started'."""
+    return subprocess.Popen(
+        [str(LOOP), '--wait', str(started)],
+        env=loop_env(volume, interval=interval),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def test_a_sync_request_cuts_the_wait_short(volume: Volume) -> None:
+    started = int(time.time()) - 5
+    proc = wait_after_pass(volume, started, interval=60)
+    time.sleep(1.5)
+    assert proc.poll() is None, 'the wait ended before anything asked it to'
+
+    volume.request_sync(time.time())
+
+    # One poll step is a second here; three is plenty and nowhere near 60.
+    assert proc.wait(timeout=3) == 0
+
+
+def test_a_request_during_the_pass_is_answered_at_once(volume: Volume) -> None:
+    """Made after the pass started, so the pass may already have fetched
+    the feed someone was waiting on. The next pass must not wait."""
+    started = int(time.time()) - 10
+    volume.request_sync(started + 5)
+
+    began = time.monotonic()
+    assert wait_after_pass(volume, started, interval=60).wait(timeout=3) == 0
+    assert time.monotonic() - began < 1
+
+
+def test_a_request_in_the_second_the_pass_started_still_counts(volume: Volume) -> None:
+    """The loop only has whole seconds, so this could be either side of the
+    start. Pulling again is the safe guess."""
+    started = int(time.time()) - 10
+    volume.request_sync(started)
+
+    assert wait_after_pass(volume, started, interval=60).wait(timeout=3) == 0
+
+
+def test_a_request_the_last_pass_answered_is_not_answered_twice(volume: Volume) -> None:
+    started = int(time.time())
+    volume.request_sync(started - 30)
+
+    assert wait_after_pass(volume, started, interval=1).wait(timeout=5) == 1
+
+
+def test_no_request_waits_the_whole_interval(volume: Volume) -> None:
+    began = time.monotonic()
+    assert wait_after_pass(volume, int(time.time()), interval=1).wait(timeout=5) == 1
+    assert time.monotonic() - began >= 1

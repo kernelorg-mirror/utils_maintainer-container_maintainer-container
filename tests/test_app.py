@@ -10,17 +10,22 @@ the link out in a form git-config -- and therefore PublicInbox::Config --
 reads back.
 
 The rest cover the public-inbox config the dashboard writes, the
-finished-setup screen, the argv `kgl track-subsystem' is run with, and
-how the dashboard answers HEAD.
+finished-setup screen, the argv `kgl track-subsystem' is run with, how
+the dashboard answers HEAD, and "Sync now".
 """
 
+import configparser
+import gzip
 import http.client
 import json
 import os
 import shutil
+import socketserver
 import subprocess
 import sys
+import tempfile
 import threading
+import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Iterator, List, NamedTuple, Optional, Tuple
@@ -663,3 +668,252 @@ class TestHead:
         assert status == 200
         assert content_type == 'application/json'
         assert body.startswith(b'{')
+
+
+class FakeGrokListener:
+    """grok-pull's [pull] socket, as far as the dashboard can tell.
+
+    Records what arrives on each connection separately, because the real
+    listener drops a connection at the first path it doesn't know: two
+    repos sent down one connection is a bug even if both arrive here.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.connections: List[List[str]] = []
+        connections = self.connections
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self) -> None:
+                connections.append([line.decode().rstrip('\n') for line in self.rfile])
+
+        self.server = socketserver.ThreadingUnixStreamServer(str(path), Handler)
+        self.server.daemon_threads = False
+        self.server.block_on_close = True
+        # A short poll, or every close() waits up to the default half second.
+        self.thread = threading.Thread(target=self.server.serve_forever, args=(0.02,), daemon=True)
+        self.thread.start()
+
+    def received(self, count: int) -> List[List[str]]:
+        """What arrived, once `count' connections have been handled.
+
+        The dashboard is done once its sends return, but the server may
+        not have accepted them yet. Shutting down first would leave them
+        in the backlog and read as never sent. The close afterwards waits
+        out any handler still running, so a connection beyond `count' is
+        in the result too.
+        """
+        deadline = time.monotonic() + 5
+        while len(self.connections) < count and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.close()
+        return sorted(self.connections)
+
+    def close(self) -> None:
+        """Stop, waiting for every handler that has started."""
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+
+
+class TestSync:
+    """The "Sync now" button: asking the loops for a pass, never running one.
+
+    The mail half is a request stamp kgl-pull-loop.sh watches and a state
+    file it writes back, so these check the dashboard reads those by the
+    same rules the loop writes them by (test_pull_loop.py has the loop's
+    side). The git half talks to grok-pull's own socket.
+    """
+
+    @pytest.fixture(autouse=True)
+    def volume(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+        monkeypatch.setattr(app, 'SELECTION_PATH', tmp_path / 'selected-subsystems.json')
+        monkeypatch.setattr(app, 'REPO_SELECTION_PATH', tmp_path / 'selected-repos.json')
+        monkeypatch.setattr(app, 'SYNC_REQUEST_PATH', tmp_path / 'sync-requested')
+        monkeypatch.setattr(app, 'KGL_PULL_STATE_PATH', tmp_path / 'kgl-pull-state')
+        monkeypatch.setattr(app, 'PULL_STAMP_PATH', tmp_path / 'lore-updated')
+        monkeypatch.setattr(app, 'GROKMIRROR_MANIFEST_PATH', tmp_path / 'manifest.js.gz')
+        # Not under tmp_path: a unix socket's path has to fit in 108 bytes,
+        # and pytest's tmp_path for a long test name doesn't.
+        with tempfile.TemporaryDirectory(prefix='sync-') as short:
+            monkeypatch.setattr(app, 'GROKMIRROR_SOCKET_PATH', Path(short) / 'grok-pull.socket')
+            yield tmp_path
+
+    @staticmethod
+    def track(*names: str) -> None:
+        app.SELECTION_PATH.write_text(json.dumps({'selected': list(names)}), encoding='utf-8')
+
+    @staticmethod
+    def pick_repos(*paths: str, mirrored: Tuple[str, ...] = ()) -> None:
+        app.REPO_SELECTION_PATH.write_text(json.dumps({'selected': list(paths)}), encoding='utf-8')
+        with gzip.open(app.GROKMIRROR_MANIFEST_PATH, 'wt') as f:
+            json.dump({path: {'fingerprint': 'x'} for path in mirrored}, f)
+
+    @staticmethod
+    def requested_at(when: int) -> None:
+        app.SYNC_REQUEST_PATH.touch()
+        os.utime(app.SYNC_REQUEST_PATH, (when, when))
+
+    @staticmethod
+    def pass_state(**state: int) -> None:
+        app.KGL_PULL_STATE_PATH.write_text(''.join(f'{k}={v}\n' for k, v in state.items()), encoding='utf-8')
+
+    @pytest.fixture
+    def listener(self) -> Iterator[FakeGrokListener]:
+        listener = FakeGrokListener(app.GROKMIRROR_SOCKET_PATH)
+        try:
+            yield listener
+        finally:
+            listener.close()
+
+    @pytest.fixture(autouse=True)
+    def selection_is_readable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # read_selection() filters against the MAINTAINERS table, which no
+        # test here loads; every name is a known subsystem for these.
+        monkeypatch.setattr(app, 'SUBSYSTEMS', {'USB': object(), 'SPI': object()})
+        monkeypatch.setattr(app, 'MANIFEST', {f'/{MAINLINE}': {}, f'/{USB}': {}, f'/{KSELFTEST}': {}})
+
+    # Mail
+
+    def test_a_request_is_a_touch_the_loop_can_see(self) -> None:
+        self.track('USB')
+        before = int(time.time())
+
+        status = app.request_mail_sync()
+
+        assert int(app.SYNC_REQUEST_PATH.stat().st_mtime) >= before
+        assert status['tracked'] and status['pending']
+
+    def test_nothing_tracked_asks_for_nothing(self) -> None:
+        """No subsystems, no pull: the loop's pass would only fail."""
+        status = app.request_mail_sync()
+
+        assert not app.SYNC_REQUEST_PATH.exists()
+        assert not status['tracked']
+        assert not status['pending']
+
+    def test_pending_until_a_pass_starts_after_the_request(self) -> None:
+        self.track('USB')
+        self.requested_at(1000)
+        self.pass_state(started=900, finished=950, ok=1)
+
+        assert app.mail_sync_status()['pending']
+
+    def test_a_pass_in_the_same_second_does_not_answer_it(self) -> None:
+        """The loop pulls again for this one (test_pull_loop.py), so the
+        dashboard has to keep waiting for that pass, not stop at this one."""
+        self.track('USB')
+        self.requested_at(1000)
+        self.pass_state(started=1000, finished=1020, ok=1)
+
+        assert app.mail_sync_status()['pending']
+
+    def test_a_later_pass_under_way_is_running(self) -> None:
+        self.track('USB')
+        self.requested_at(1000)
+        self.pass_state(started=1001)
+
+        status = app.mail_sync_status()
+        assert not status['pending']
+        assert status['running']
+        assert status['ok'] is None
+
+    def test_a_finished_pass_says_how_it_went(self) -> None:
+        self.track('USB')
+        self.requested_at(1000)
+        self.pass_state(started=1001, finished=1030, ok=0)
+        app.PULL_STAMP_PATH.write_text('900\n', encoding='utf-8')
+
+        status = app.mail_sync_status()
+        assert not status['pending'] and not status['running']
+        assert status['ok'] is False
+        # The last good pass, untouched by the bad one.
+        assert status['updated'] == 900
+
+    def test_a_garbled_state_reads_as_none(self) -> None:
+        app.KGL_PULL_STATE_PATH.write_text('started=soon\nwhat\n', encoding='utf-8')
+
+        assert app.read_pull_state() == {}
+
+    # Git
+
+    def test_the_generated_config_turns_the_socket_on(self, monkeypatch: pytest.MonkeyPatch, volume: Path) -> None:
+        monkeypatch.setattr(app, 'GROKMIRROR_TOPLEVEL', volume / 'repos')
+        monkeypatch.setattr(app, 'GROKMIRROR_CONF_PATH', volume / 'grokmirror.conf')
+        monkeypatch.setattr(app, 'check_grokmirror_config', lambda online=False: {'ok': True, 'diagnostics': []})
+
+        app.write_grokmirror_config([f'/{USB}'])
+
+        config = configparser.ConfigParser()
+        config.read(volume / 'grokmirror.conf')
+        assert config['pull']['socket'] == str(app.GROKMIRROR_SOCKET_PATH)
+
+    def test_each_mirrored_repo_is_sent_on_its_own(self, listener: FakeGrokListener) -> None:
+        self.pick_repos(f'/{MAINLINE}', f'/{USB}', mirrored=(f'/{MAINLINE}', f'/{USB}'))
+
+        result = app.request_mirror_sync()
+
+        assert result['state'] == 'queued'
+        assert result['queued'] == [f'/{MAINLINE}', f'/{USB}']
+        assert listener.received(2) == sorted([[f'/{MAINLINE}'], [f'/{USB}']])
+
+    def test_a_repo_still_cloning_is_not_sent(self, listener: FakeGrokListener) -> None:
+        """Its first clone is as current as it gets, and the real listener
+        would hang up on a path it hasn't got."""
+        self.pick_repos(f'/{MAINLINE}', f'/{KSELFTEST}', mirrored=(f'/{MAINLINE}',))
+
+        result = app.request_mirror_sync()
+
+        assert result['cloning'] == [f'/{KSELFTEST}']
+        assert listener.received(1) == [[f'/{MAINLINE}']]
+
+    def test_no_repos_picked_sends_nothing(self) -> None:
+        assert app.request_mirror_sync()['state'] == 'none'
+
+    def test_an_old_config_without_the_socket_says_how_to_fix_it(self) -> None:
+        self.pick_repos(f'/{USB}', mirrored=(f'/{USB}',))
+
+        result = app.request_mirror_sync()
+
+        assert result['state'] == 'unavailable'
+        assert 'Start mirroring' in result['message']
+
+    def test_a_socket_nobody_listens_on_is_reported(self) -> None:
+        """What grok-pull leaves behind when it dies: the file, no listener."""
+        self.pick_repos(f'/{USB}', mirrored=(f'/{USB}',))
+        FakeGrokListener(app.GROKMIRROR_SOCKET_PATH).close()
+        assert app.GROKMIRROR_SOCKET_PATH.exists()
+
+        result = app.request_mirror_sync()
+
+        assert result['state'] == 'unavailable'
+        assert result['queued'] == []
+
+    # On the wire
+
+    def test_the_button_and_the_poll(self, listener: FakeGrokListener) -> None:
+        self.track('USB')
+        self.pick_repos(f'/{USB}', mirrored=(f'/{USB}',))
+        server = ThreadingHTTPServer(('127.0.0.1', 0), app.SetupHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        conn = http.client.HTTPConnection('127.0.0.1', server.server_address[1], timeout=10)
+        try:
+            # A bodyless POST, the way the page sends it, then a poll on the
+            # same kept-alive connection.
+            conn.request('POST', '/api/sync')
+            posted = conn.getresponse()
+            pressed = json.loads(posted.read())
+            conn.request('GET', '/api/sync')
+            polled = conn.getresponse()
+            poll = json.loads(polled.read())
+        finally:
+            conn.close()
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+        assert posted.status == polled.status == 200
+        assert pressed['mail']['pending']
+        assert pressed['git']['queued'] == [f'/{USB}']
+        assert poll['mail']['pending']
+        assert 'git' not in poll

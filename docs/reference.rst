@@ -64,6 +64,30 @@ To get a shell::
 
 ``lei q`` inside the container searches every tracked subsystem.
 
+Sync now
+--------
+The container looks for new mail every ``KGL_PULL_INTERVAL`` seconds.
+grok-pull looks for new commits every five minutes (``refresh`` in
+``grokmirror.conf``). To get both right away, press **Sync now** at the
+top of the dashboard.
+
+- **Mail:** a mail update starts within a few seconds. If one is already
+  running, a new one starts when it ends. That way you always get the mail
+  that was there when you pressed the button. The dashboard tells you when
+  it is done.
+- **Git:** every tree that is already mirrored is fetched now. A tree
+  that is still on its first clone is skipped, because it is already as
+  new as it can be.
+
+You can do the same from a script::
+
+    curl -X POST http://127.0.0.1:11043/api/sync
+
+If the dashboard says that grok-pull is not listening, your
+``grokmirror.conf`` was written by an older version of the container.
+Press **Change setup**, go to the repos screen and press **Start
+mirroring** once. This writes a new config.
+
 Updating
 --------
 korgalore and liblore update themselves every day. For everything else,

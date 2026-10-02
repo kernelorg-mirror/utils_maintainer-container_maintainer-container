@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import threading
 import time
@@ -116,6 +117,21 @@ GROKMIRROR_CONF_PATH = Path(env('GROKMIRROR_CONF_PATH'))
 GROKMIRROR_MANIFEST_PATH = Path(env('GROKMIRROR_MANIFEST_PATH'))
 GROKMIRROR_PID_PATH = Path(env('GROKMIRROR_PID_PATH'))
 GROKMIRROR_LOG_PATH = Path(env('GROKMIRROR_LOG_PATH'))
+GROKMIRROR_SOCKET_PATH = Path(env('GROKMIRROR_SOCKET_PATH'))
+
+# "Sync now". This app runs neither kgl pull nor grok-pull for it: it asks
+# the loops that own them. The mail side is a request stamp that
+# kgl-pull-loop.sh watches, plus a state file the loop writes back as each
+# pass starts and ends. The git side is grok-pull's own socket (see
+# request_mirror_sync).
+SYNC_REQUEST_PATH = Path(env('SYNC_REQUEST_PATH'))
+KGL_PULL_STATE_PATH = Path(env('KGL_PULL_STATE_PATH'))
+PULL_STAMP_PATH = Path(env('PULL_STAMP_PATH'))
+
+# How long to wait on grok-pull's socket before giving up on it. The
+# listener accepts in a thread of its own and reads one line, so anything
+# near this means it is not really there.
+GROKMIRROR_SOCKET_TIMEOUT = 5
 
 # Enough of grok-pull's log to show what it has been doing without handing
 # a browser a whole clone's worth of output on its first poll.
@@ -985,6 +1001,11 @@ def write_grokmirror_config(paths: List[str]) -> Dict[str, Any]:
         'pull_threads': '5',
         'retries': '3',
         'include': '\n\t'.join(paths),
+        # What "Sync now" writes repo paths into. Without it, the only way
+        # to get grok-pull to look again before the next refresh is to
+        # restart it, and a restart in the middle of a first clone throws
+        # that clone away.
+        'socket': str(GROKMIRROR_SOCKET_PATH),
         # Only takes effect under grok-pull -o -- grok-pull-loop.sh runs the
         # initial import the dashboard triggers, then keeps re-checking the
         # manifest on this interval for as long as the container is up.
@@ -1650,6 +1671,157 @@ def read_mirror_log(since: int) -> Tuple[str, int]:
     return raw[: tail + 1].decode('utf-8', 'replace'), start + tail + 1
 
 
+# "Sync now", the dashboard's one button for "get me what upstream has,
+# without waiting for the next interval". Neither half runs anything here.
+# kgl-pull-loop.sh is the only thing that pulls mail, because a pull it
+# didn't run would also skip the extindex and the pull stamp that come
+# after it. grok-pull-loop.sh is the only thing that may start grok-pull
+# (its header says why). So this app only asks, and reports what it can
+# see from the volume.
+
+
+def _read_int(path: Path) -> Optional[int]:
+    try:
+        return int(path.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def read_pull_state() -> Dict[str, int]:
+    """What kgl-pull-loop.sh last wrote about its passes.
+
+    `started' on its own means a pass is under way; `finished' and `ok'
+    are added when it ends. Lines that don't parse are skipped rather than
+    failing the whole read, so a newer loop that writes more keys doesn't
+    break an older dashboard.
+    """
+    try:
+        text = KGL_PULL_STATE_PATH.read_text()
+    except OSError:
+        return {}
+    state: Dict[str, int] = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition('=')
+        if sep and value.strip().isdigit():
+            state[key.strip()] = int(value)
+    return state
+
+
+def mail_sync_status() -> Dict[str, Any]:
+    """Where the mail side of a sync request is, for the dashboard to poll.
+
+    The rules are kgl-pull-loop.sh's, read from the other end. A request
+    is answered by the first pass that starts in a later second, so it is
+    `pending' until one has. While a pass has started but not finished it
+    is `running'. A container that died part-way through a pass leaves
+    `running' behind, but only until the next start, which pulls straight
+    away.
+
+    Seconds, not the float mtime, because `stat -c %Y' is all the loop
+    compares, and the two must agree on whether a request came before or
+    after a pass.
+    """
+    try:
+        requested: Optional[int] = int(SYNC_REQUEST_PATH.stat().st_mtime)
+    except OSError:
+        requested = None
+    state = read_pull_state()
+    started = state.get('started')
+    finished = state.get('finished')
+    return {
+        'tracked': bool(read_selection()),
+        'requested': requested,
+        'pending': requested is not None and (started is None or requested >= started),
+        'running': started is not None and finished is None,
+        'started': started,
+        'finished': finished,
+        'ok': bool(state.get('ok')) if finished is not None else None,
+        # The last pass that went fully right -- the same stamp router.psgi
+        # sends to b4 as `updated='.
+        'updated': _read_int(PULL_STAMP_PATH),
+    }
+
+
+def request_mail_sync() -> Dict[str, Any]:
+    """Ask kgl-pull-loop.sh for a pass now, and say where that stands.
+
+    Touching the file is the whole request. It needs no lock and no queue.
+    Two presses in a row are one request, and a press during a pass gets
+    the pass after it, which is what the button promises.
+    """
+    if read_selection():
+        SYNC_REQUEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SYNC_REQUEST_PATH.touch()
+        logger.info('Asked kgl-pull-loop.sh for a mail sync')
+    return mail_sync_status()
+
+
+def request_mirror_sync() -> Dict[str, Any]:
+    """Ask the running grok-pull to fetch every mirrored repo now.
+
+    grok-pull -o listens on [pull] socket for repo paths, one per line, and
+    queues each one it finds in its local manifest for a fetch, whether or
+    not the remote manifest says it changed. This is the interface
+    grokmirror has for exactly this, so it needs no second grok-pull and no
+    restart of this one.
+
+    One connection per repo, because the listener drops the connection at
+    the first path it doesn't know. Only repos already in the local
+    manifest are sent. The listener would ignore the others anyway, and a
+    repo that isn't there yet is still on its first clone, which is as
+    current as it gets.
+    """
+    selected = read_repo_selection()
+    if not selected:
+        return {'state': 'none', 'queued': [], 'cloning': []}
+
+    try:
+        with gzip.open(GROKMIRROR_MANIFEST_PATH, 'rt') as f:
+            mirrored = set(json.load(f))
+    except (OSError, ValueError):
+        mirrored = set()
+    queued = [path for path in selected if path in mirrored]
+    cloning = [path for path in selected if path not in mirrored]
+    result: Dict[str, Any] = {'state': 'queued', 'queued': [], 'cloning': cloning}
+    if not queued:
+        return result
+
+    try:
+        is_socket = stat.S_ISSOCK(GROKMIRROR_SOCKET_PATH.stat().st_mode)
+    except OSError:
+        is_socket = False
+    if not is_socket:
+        # A grokmirror.conf from before the dashboard wrote `socket' into
+        # it. The next save from the repos screen adds it.
+        return {
+            **result,
+            'state': 'unavailable',
+            'message': 'grok-pull is not listening for sync requests. '
+            'Save the repo selection again (Change setup, then Start mirroring) to turn it on.',
+        }
+
+    for path in queued:
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+                conn.settimeout(GROKMIRROR_SOCKET_TIMEOUT)
+                conn.connect(str(GROKMIRROR_SOCKET_PATH))
+                conn.sendall(f'{path}\n'.encode())
+        except OSError as e:
+            # Refused is the usual one: grok-pull is between restarts and
+            # its old socket file is still there. It fetches everything as
+            # it starts anyway.
+            logger.warning('Could not ask grok-pull to sync %s: %s', path, e)
+            return {
+                **result,
+                'state': 'unavailable',
+                'message': f'grok-pull did not answer ({e.strerror or e}). '
+                'If it is restarting, it checks every tree when it is back.',
+            }
+        result['queued'].append(path)
+    logger.info('Asked grok-pull to sync %d repo(s)', len(queued))
+    return result
+
+
 def read_daemons() -> List[str]:
     """Load which optional listeners are turned on, ignoring unknown names."""
     try:
@@ -1877,6 +2049,8 @@ class SetupHandler(BaseHTTPRequestHandler):
             self.send_json(daemons_status())
         elif route.path == '/api/summary':
             self.send_json(summary())
+        elif route.path == '/api/sync':
+            self.send_json({'mail': mail_sync_status()})
         else:
             self.send_error(404)
 
@@ -1889,6 +2063,7 @@ class SetupHandler(BaseHTTPRequestHandler):
             '/api/repo-selection',
             '/api/grokmirror/pull',
             '/api/daemons',
+            '/api/sync',
         ):
             self.send_error(404)
             return
@@ -1971,6 +2146,12 @@ class SetupHandler(BaseHTTPRequestHandler):
                     'config_check': report,
                 }
             )
+            return
+
+        if route == '/api/sync':
+            # No body to read: there is nothing to choose. It syncs whatever
+            # is set up, which is what the button says.
+            self.send_json({'mail': request_mail_sync(), 'git': request_mirror_sync()})
             return
 
         if route == '/api/daemons':

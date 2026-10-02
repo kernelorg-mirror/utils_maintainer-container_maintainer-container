@@ -51,9 +51,33 @@
 # The stamp is the time the pass started, not ended: mail that reached
 # upstream during the pull may or may not be in it.
 #
+# The dashboard's "Sync now" button asks for a pass without running one:
+# it touches SYNC_REQUEST_PATH, and the wait between passes looks at that
+# every SYNC_POLL_INTERVAL seconds and cuts itself short when it is newer
+# than the start of the last pass. The dashboard can't just run `kgl pull'
+# itself. It would race the pull this loop may already have going, and
+# nothing would move the stamp or run extindex after it, so the new mail
+# would sit in the archives without showing up in /lore/all/.
+#
+# A request made while a pass is running counts as newer than that pass,
+# so a second pass follows straight after it. That is on purpose: the pass
+# under way may have already fetched the feed somebody was waiting on, and
+# "Sync now" has to mean "everything up to when I pressed it". A request in
+# the same second a pass started also counts, for the same reason. At
+# worst that is one pass more than needed, and passes with nothing new are
+# cheap.
+#
+# Each pass also writes KGL_PULL_STATE_PATH: just `started=' when it
+# begins, and `started=', `finished=' and `ok=' when it ends. That is what
+# the dashboard reads to tell "still waiting", "pulling" and "done" apart.
+# The file is replaced whole, so it never holds half of one and half of the
+# other.
+#
 # `--once' runs a single pass and exits with 0 only if it moved the stamp,
-# for the tests. DEFAULTS_ENV is for them too: outside the container
-# defaults.env is not where the line below expects it.
+# for the tests. `--wait STARTED' runs just the wait after a pass that
+# started at STARTED (epoch seconds), and exits with 0 if a sync request cut
+# it short, also for the tests. DEFAULTS_ENV is for them too: outside the
+# container defaults.env is not where the line below expects it.
 
 set -uo pipefail
 
@@ -78,10 +102,18 @@ covered() {
     "$VENV_DIR/bin/python" "$LORE_COVERAGE_SCRIPT" "$PI_CONFIG" "$KORGALORE_CONF_PATH"
 }
 
+# Written whole and renamed into place, so the dashboard never reads half
+# a state.
+record_state() {
+    printf '%s\n' "$@" > "$KGL_PULL_STATE_PATH.new" &&
+        mv -f "$KGL_PULL_STATE_PATH.new" "$KGL_PULL_STATE_PATH"
+}
+
 # One pass. Succeeds only when it is good enough to move the stamp.
 pull_pass() {
-    local started ok=1
-    started=$(date +%s)
+    local ok=1
+    pass_started=$(date +%s)
+    record_state "started=$pass_started"
 
     if [ ! -f "$KORGALORE_CONF_PATH" ]; then
         # Nothing tracked yet, so nothing was pulled.
@@ -103,20 +135,56 @@ pull_pass() {
             ok=0
         fi
     fi
-    [ "$ok" = 1 ] && covered || return 1
+    if [ "$ok" = 1 ] && covered; then
+        # Written whole and renamed into place, so router.psgi never reads
+        # half a number -- and the rename gives it a new inode to notice.
+        printf '%s\n' "$pass_started" > "$PULL_STAMP_PATH.new" &&
+            mv -f "$PULL_STAMP_PATH.new" "$PULL_STAMP_PATH" || ok=0
+    else
+        ok=0
+    fi
 
-    # Written whole and renamed into place, so router.psgi never reads half
-    # a number -- and the rename gives it a new inode to notice.
-    printf '%s\n' "$started" > "$PULL_STAMP_PATH.new" &&
-        mv -f "$PULL_STAMP_PATH.new" "$PULL_STAMP_PATH"
+    record_state "started=$pass_started" "finished=$(date +%s)" "ok=$ok"
+    [ "$ok" = 1 ]
 }
 
-if [ "${1:-}" = --once ]; then
+# Whether the dashboard asked for a sync since the last pass started.
+sync_requested() {
+    local requested
+    requested=$(stat -c %Y "$SYNC_REQUEST_PATH" 2>/dev/null) || return 1
+    [ "$requested" -ge "$pass_started" ]
+}
+
+# Wait out KGL_PULL_INTERVAL, a step at a time, so a sync request is seen
+# within one step. Returns 0 if a request cut the wait short. It looks
+# before the first step, so a request made during the pass is answered
+# straight away.
+wait_for_next_pass() {
+    local waited=0
+    while [ "$waited" -lt "$KGL_PULL_INTERVAL" ]; do
+        if sync_requested; then
+            echo "kgl-pull-loop: sync requested, pulling now" >&2
+            return 0
+        fi
+        sleep "$SYNC_POLL_INTERVAL"
+        waited=$((waited + SYNC_POLL_INTERVAL))
+    done
+    return 1
+}
+
+case "${1:-}" in
+--once)
     pull_pass
     exit
-fi
+    ;;
+--wait)
+    pass_started=$2
+    wait_for_next_pass
+    exit
+    ;;
+esac
 
 while :; do
     pull_pass
-    sleep "$KGL_PULL_INTERVAL"
+    wait_for_next_pass
 done

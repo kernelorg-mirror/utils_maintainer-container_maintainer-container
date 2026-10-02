@@ -220,6 +220,27 @@
     color: var(--muted);
   }
   .groups li { overflow-wrap: anywhere; }
+  /* The title and "Sync now" share a row, the button on the right. They
+     wrap onto two rows on a narrow screen rather than squeezing the
+     title. */
+  .done-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.6rem 1.5rem;
+  }
+  .sync {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.4rem;
+    max-width: 20rem;
+    text-align: right;
+  }
+  #sync-now { font-size: 1.05rem; padding: 0.8rem 1.8rem; }
+  #sync-status { font-size: 0.85rem; }
+  #sync-status div + div { margin-top: 0.2rem; }
   #done-screen details { margin-top: 0.7rem; }
   #done-screen summary { color: var(--muted); font-size: 0.8rem; cursor: pointer; }
 </style>
@@ -359,10 +380,17 @@
 </main>
 
 <main id="done-screen" hidden>
-  <h1>Your local kernel.org</h1>
+  <div class="done-head">
+    <h1>Your local kernel.org</h1>
+    <div class="sync">
+      <button id="sync-now">Sync now</button>
+      <div class="status" id="sync-status" role="status" aria-live="polite"></div>
+    </div>
+  </div>
   <p class="lede">Everything below is served from this container at
   <code id="done-base"></code>. It keeps itself up to date with upstream --
-  there is nothing here you have to re-run.
+  there is nothing here you have to re-run. It checks on a timer;
+  <strong>Sync now</strong> checks the mail and the git trees right away.
   <span id="done-identity"></span></p>
 
   <section>
@@ -1713,11 +1741,111 @@ function renderDone(summary) {
   renderDoneMail(summary);
 }
 
+// "Sync now". The button only asks: kgl-pull-loop.sh starts its next mail
+// pass early, and the running grok-pull fetches every mirrored tree. The
+// git side is fire-and-forget, so its line is whatever the request said.
+// The mail side is polled until the pass it asked for has finished.
+const syncBtn = document.getElementById('sync-now');
+const syncStatus = document.getElementById('sync-status');
+let syncTimer = null;
+let syncGitNote = '';
+
+function stopSyncPolling() {
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = null;
+}
+
+// Just the time for today, with the date for anything older, so "as of
+// 09:14" can't be read as this morning when it was last week.
+function when(epoch) {
+  const date = new Date(epoch * 1000);
+  if (date.toDateString() === new Date().toDateString()) {
+    return date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  }
+  return date.toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'});
+}
+
+function describeMailSync(mail) {
+  if (!mail.tracked) return '';
+  if (mail.pending && mail.running) {
+    return 'Mail: finishing the update already under way, then pulling again...';
+  }
+  if (mail.pending) return 'Mail: starting...';
+  if (mail.running) return 'Mail: pulling...';
+  if (mail.ok === false) {
+    return 'Mail: the last update had errors. podman logs has the details.';
+  }
+  if (mail.updated) return 'Mail: up to date as of ' + when(mail.updated) + '.';
+  return '';
+}
+
+function describeGitSync(git) {
+  if (git.state === 'unavailable') return 'Git: ' + git.message;
+  if (git.state !== 'queued') return '';
+  const parts = [];
+  if (git.queued.length) {
+    parts.push(`fetching ${git.queued.length} `
+      + (git.queued.length === 1 ? 'tree' : 'trees') + '.');
+  }
+  if (git.cloning.length) {
+    parts.push(`${git.cloning.length} still on `
+      + (git.cloning.length === 1 ? 'its' : 'their') + ' first clone.');
+  }
+  return parts.length ? 'Git: ' + parts.join(' ') : '';
+}
+
+function renderSync(mail) {
+  const lines = [describeMailSync(mail), syncGitNote].filter(Boolean).map((text) => {
+    const line = document.createElement('div');
+    line.textContent = text;
+    return line;
+  });
+  syncStatus.replaceChildren(...lines);
+  const busy = mail.tracked && (mail.pending || mail.running);
+  syncBtn.disabled = busy;
+  syncBtn.textContent = busy ? 'Syncing...' : 'Sync now';
+  return busy;
+}
+
+// Also what showDone() calls, so a reload in the middle of a sync picks the
+// polling back up instead of offering the button again.
+async function pollSync() {
+  stopSyncPolling();
+  try {
+    const res = await fetch('/api/sync');
+    if (!res.ok) throw new Error(res.statusText);
+    const data = await res.json();
+    if (renderSync(data.mail)) syncTimer = setTimeout(pollSync, 2000);
+  } catch (err) {
+    syncStatus.textContent = 'Could not check on the sync: ' + err.message;
+    syncBtn.disabled = false;
+    syncBtn.textContent = 'Sync now';
+  }
+}
+
+syncBtn.addEventListener('click', async () => {
+  stopSyncPolling();
+  syncBtn.disabled = true;
+  syncBtn.textContent = 'Syncing...';
+  try {
+    const res = await fetch('/api/sync', {method: 'POST'});
+    if (!res.ok) throw new Error(res.statusText);
+    const data = await res.json();
+    syncGitNote = describeGitSync(data.git);
+    if (renderSync(data.mail)) syncTimer = setTimeout(pollSync, 2000);
+  } catch (err) {
+    syncStatus.textContent = 'Could not start a sync: ' + err.message;
+    syncBtn.disabled = false;
+    syncBtn.textContent = 'Sync now';
+  }
+});
+
 async function showDone() {
   const res = await fetch('/api/summary');
   if (!res.ok) throw new Error(res.statusText);
   const summary = await res.json();
   renderDone(summary);
+  pollSync();
   stopMirrorPolling();
   identityScreen.hidden = true;
   pickScreen.hidden = true;
@@ -1744,6 +1872,7 @@ toDoneBtn.addEventListener('click', async () => {
 // forward from there anyway.
 doneSetupBtn.addEventListener('click', () => {
   doneStatus.textContent = '';
+  stopSyncPolling();
   openStart();
 });
 
