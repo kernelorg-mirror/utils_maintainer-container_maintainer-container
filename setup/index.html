@@ -1779,19 +1779,13 @@ function describeMailSync(mail) {
   return '';
 }
 
+// Only ever what the request did, never how the fetch is going: grok-pull
+// does not tell us when it is done, so anything in the present tense would
+// still say "fetching" long after it had finished.
 function describeGitSync(git) {
   if (git.state === 'unavailable') return 'Git: ' + git.message;
-  if (git.state !== 'queued') return '';
-  const parts = [];
-  if (git.queued.length) {
-    parts.push(`fetching ${git.queued.length} `
-      + (git.queued.length === 1 ? 'tree' : 'trees') + '.');
-  }
-  if (git.cloning.length) {
-    parts.push(`${git.cloning.length} still on `
-      + (git.cloning.length === 1 ? 'its' : 'their') + ' first clone.');
-  }
-  return parts.length ? 'Git: ' + parts.join(' ') : '';
+  if (git.state === 'queued' && git.queued.length) return 'Git: fetch requested.';
+  return '';
 }
 
 function renderSync(mail) {
