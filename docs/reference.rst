@@ -79,14 +79,86 @@ top of the dashboard.
   that is still on its first clone is skipped, because it is already as
   new as it can be.
 
-You can do the same from a script::
-
-    curl -X POST http://127.0.0.1:11043/api/sync
-
 If the dashboard says that grok-pull is not listening, your
 ``grokmirror.conf`` was written by an older version of the container.
 Press **Change setup**, go to the repos screen and press **Start
 mirroring** once. This writes a new config.
+
+Sync from the command line
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+The button calls ``/api/sync``, and you can call it too. Use the same
+address you open the dashboard at. If you reach the container over an SSH
+forward, that is still ``http://127.0.0.1:11043``.
+
+To start a sync and not wait for it, put this alias in your
+``~/.bashrc``::
+
+    alias llsync='curl -fsS -X POST http://127.0.0.1:11043/api/sync >/dev/null'
+
+To wait until the new mail is in the archive, use this function
+instead::
+
+    llsync() {
+        local url=http://127.0.0.1:11043/api/sync state
+        curl -fsS -X POST "$url" >/dev/null || return
+        while :; do
+            state=$(curl -fsS "$url" | python3 -c '
+    import json, sys
+    m = json.load(sys.stdin)["mail"]
+    print("busy" if m["pending"] or m["running"] else "failed" if m["ok"] is False else "done")
+    ') || return
+            [ "$state" = busy ] || break
+            sleep 2
+        done
+        if [ "$state" = failed ]; then
+            echo "llsync: the mail update had errors, see podman logs" >&2
+            return 1
+        fi
+    }
+
+It waits only for the mail, and it returns 1 if the mail update had
+errors. The git trees are fetched in the background, and how long that
+takes depends on how much changed upstream.
+
+``POST /api/sync`` takes no request body. It answers with JSON like this::
+
+    {
+      "mail": {"tracked": true, "pending": true, "running": false,
+               "ok": true, "updated": 1791043200, ...},
+      "git": {"state": "queued", "queued": ["/pub/scm/.../usb.git"],
+              "cloning": []}
+    }
+
+``GET /api/sync`` changes nothing. It gives you only the ``mail`` part,
+so you can check how the sync is going. All times are Unix time, in
+seconds.
+
+=================  ==========================================================
+``mail`` field     What it means
+=================  ==========================================================
+``tracked``        ``false`` if you track no subsystems. Then there is no
+                   mail to sync, and nothing else here changes.
+``pending``        You asked for a sync, and the mail update for it has not
+                   started yet.
+``running``        A mail update is running now.
+``ok``             How the last mail update ended. ``null`` while it runs.
+``updated``        When the last good mail update started. This is the
+                   same time that is in ``/data/lore-updated``.
+=================  ==========================================================
+
+The sync is done when ``pending`` and ``running`` are both ``false``.
+
+=================  ==========================================================
+``git`` field      What it means
+=================  ==========================================================
+``state``          ``queued``: the trees in ``queued`` are being fetched.
+                   ``none``: no trees are mirrored. ``unavailable``:
+                   grok-pull did not take the request, and ``message`` says
+                   why.
+``queued``         The trees that grok-pull will fetch now.
+``cloning``        Trees that are still on their first clone. They are not
+                   fetched again.
+=================  ==========================================================
 
 Updating
 --------
